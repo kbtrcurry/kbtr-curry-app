@@ -32,6 +32,26 @@ export async function readRange(
   return data.values ?? []
 }
 
+/** 指定範囲の値を上書き更新する。 */
+export async function updateValues(
+  token: string,
+  range: string,
+  rows: (string | number)[][],
+) {
+  const res = await fetch(
+    `${BASE}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ values: rows }),
+    },
+  )
+  return handle(res)
+}
+
 /** 指定範囲の末尾に行を追加する。 */
 export async function appendRows(
   token: string,
