@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
+import { AuthProvider } from './lib/auth'
 import PosPage from './pages/PosPage'
 import DashboardPage from './pages/DashboardPage'
 import IngredientsPage from './pages/IngredientsPage'
@@ -43,16 +44,18 @@ function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <GoogleOAuthProvider clientId={CLIENT_ID}>
-      <BrowserRouter basename="/kbtr-curry-app">
-        <Layout>
-          <Routes>
-            <Route path="/" element={<PosPage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/ingredients" element={<IngredientsPage />} />
-            <Route path="/menu" element={<MenuSettingsPage />} />
-          </Routes>
-        </Layout>
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter basename="/kbtr-curry-app">
+          <Layout>
+            <Routes>
+              <Route path="/" element={<PosPage />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/ingredients" element={<IngredientsPage />} />
+              <Route path="/menu" element={<MenuSettingsPage />} />
+            </Routes>
+          </Layout>
+        </BrowserRouter>
+      </AuthProvider>
     </GoogleOAuthProvider>
   )
 }
