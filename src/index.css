@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #fafaf9;
+  color: #1c1917;
+}
+
+#root {
+  min-height: 100svh;
+}
