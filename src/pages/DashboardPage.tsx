@@ -8,6 +8,7 @@ import {
   AuthExpiredError,
 } from '../lib/sheets'
 import { usePersistedState } from '../lib/persistState'
+import { getCached, setCached, clearCache } from '../lib/dataCache'
 
 type Summary = {
   idx: number
@@ -30,8 +31,12 @@ const thisMonth = () => {
 
 export default function DashboardPage() {
   const { token, login, logout } = useAuth()
-  const [summaries, setSummaries] = useState<Summary[]>([])
-  const [records, setRecords] = useState<SaleRec[]>([])
+  const [summaries, setSummaries] = useState<Summary[]>(
+    () => getCached<Summary[]>('dash_summaries') ?? [],
+  )
+  const [records, setRecords] = useState<SaleRec[]>(
+    () => getCached<SaleRec[]>('dash_records') ?? [],
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [openId, setOpenId] = usePersistedState<string | null>(
@@ -60,49 +65,51 @@ export default function DashboardPage() {
     [logout],
   )
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!token) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const [sum, rec] = await Promise.all([
         readRange(token, '営業サマリー!A2:H'),
         readRange(token, '営業記録!A2:E'),
       ])
-      setSummaries(
-        sum
-          .map((r, i) => ({ r, i }))
-          .filter(({ r }) => (r[0] ?? '').trim())
-          .map(({ r, i }) => ({
-            idx: i,
-            date: (r[0] ?? '').trim(),
-            sales: Number(r[1]) || 0,
-            foodCost: Number(r[2]) || 0,
-            locationFee: Number(r[3]) || 0,
-            profit: Number(r[4]) || 0,
-            memo: (r[6] ?? '').trim(),
-            otherCost: Number(r[7]) || 0,
-          })),
-      )
-      setRecords(
-        rec
-          .filter((r) => (r[0] ?? '').trim() && (r[1] ?? '').trim())
-          .map((r) => ({
-            date: (r[0] ?? '').trim(),
-            menu: (r[1] ?? '').trim(),
-            qty: Number(r[2]) || 0,
-            subtotal: Number(r[4]) || 0,
-          })),
-      )
+      const newSummaries = sum
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => (r[0] ?? '').trim())
+        .map(({ r, i }) => ({
+          idx: i,
+          date: (r[0] ?? '').trim(),
+          sales: Number(r[1]) || 0,
+          foodCost: Number(r[2]) || 0,
+          locationFee: Number(r[3]) || 0,
+          profit: Number(r[4]) || 0,
+          memo: (r[6] ?? '').trim(),
+          otherCost: Number(r[7]) || 0,
+        }))
+      const newRecords = rec
+        .filter((r) => (r[0] ?? '').trim() && (r[1] ?? '').trim())
+        .map((r) => ({
+          date: (r[0] ?? '').trim(),
+          menu: (r[1] ?? '').trim(),
+          qty: Number(r[2]) || 0,
+          subtotal: Number(r[4]) || 0,
+        }))
+      setSummaries(newSummaries)
+      setRecords(newRecords)
+      setCached('dash_summaries', newSummaries)
+      setCached('dash_records', newRecords)
     } catch (e) {
-      handleAuthError(e)
+      if (!silent) handleAuthError(e)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [token, handleAuthError])
 
   useEffect(() => {
-    load()
+    const hasCached =
+      getCached('dash_summaries') !== null && getCached('dash_records') !== null
+    load(hasCached)
   }, [load])
 
   const startEdit = (s: Summary, sid: string) => {
@@ -132,6 +139,8 @@ export default function DashboardPage() {
         [sales, foodCost, fee, profit, rate, edit.memo, other],
       ])
       setEditId(null)
+      clearCache('dash_summaries')
+      clearCache('dash_records')
       await load()
     } catch (e) {
       handleAuthError(e)
@@ -150,6 +159,8 @@ export default function DashboardPage() {
       await deleteRow(token, sheetId, s.idx + 1) // 0始まり行（ヘッダー=0）
       setOpenId(null)
       setEditId(null)
+      clearCache('dash_summaries')
+      clearCache('dash_records')
       await load()
     } catch (e) {
       handleAuthError(e)
@@ -218,7 +229,7 @@ export default function DashboardPage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold text-amber-800">📊 ダッシュボード</h1>
-        <button onClick={load} className="text-sm text-stone-500 underline">
+        <button onClick={() => load()} className="text-sm text-stone-500 underline">
           ↻ 更新
         </button>
       </div>

@@ -4,6 +4,7 @@ import { readRange, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes, type DetailItem } from '../lib/recipes'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 import { usePersistedState } from '../lib/persistState'
+import { getCached, setCached } from '../lib/dataCache'
 
 type Prep = { name: string; mult: string }
 
@@ -13,13 +14,22 @@ function fmt(x: number): string {
   return (Math.round(x * 10) / 10).toLocaleString()
 }
 
+type PrepCache = {
+  recipeMap: Record<string, DetailItem[]>
+  typeMap: Record<string, string>
+  names: string[]
+  types: string[]
+  stockMap: Record<string, number | null>
+}
+
 export default function PrepPage() {
   const { token, login, logout } = useAuth()
-  const [recipeMap, setRecipeMap] = useState<Record<string, DetailItem[]>>({})
-  const [typeMap, setTypeMap] = useState<Record<string, string>>({})
-  const [names, setNames] = useState<string[]>([])
-  const [types, setTypes] = useState<string[]>([])
-  const [stockMap, setStockMap] = useState<Record<string, number | null>>({})
+  const initCache = getCached<PrepCache>('prep_data')
+  const [recipeMap, setRecipeMap] = useState<Record<string, DetailItem[]>>(initCache?.recipeMap ?? {})
+  const [typeMap, setTypeMap] = useState<Record<string, string>>(initCache?.typeMap ?? {})
+  const [names, setNames] = useState<string[]>(initCache?.names ?? [])
+  const [types, setTypes] = useState<string[]>(initCache?.types ?? [])
+  const [stockMap, setStockMap] = useState<Record<string, number | null>>(initCache?.stockMap ?? {})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,9 +65,9 @@ export default function PrepPage() {
     [logout],
   )
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!token) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const [rd, master] = await Promise.all([
@@ -76,15 +86,19 @@ export default function PrepPage() {
       setTypeMap(rd.typeMap)
       setNames(rd.names)
       setTypes(rd.types)
+      setCached('prep_data', {
+        recipeMap: rd.recipeMap, typeMap: rd.typeMap,
+        names: rd.names, types: rd.types, stockMap: stocks,
+      })
     } catch (e) {
-      handleAuthError(e)
+      if (!silent) handleAuthError(e)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [token, handleAuthError])
 
   useEffect(() => {
-    load()
+    load(!!getCached('prep_data'))
   }, [load])
 
   const addRecipe = (name: string) => {
@@ -145,7 +159,7 @@ export default function PrepPage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold text-amber-800">🍳 仕込み計画</h1>
-        <button onClick={load} className="text-xs text-stone-400 underline">
+        <button onClick={() => load()} className="text-xs text-stone-400 underline">
           ↻ 更新
         </button>
       </div>

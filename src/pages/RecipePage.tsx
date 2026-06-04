@@ -12,6 +12,7 @@ import {
 } from '../lib/recipes'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 import { usePersistedState } from '../lib/persistState'
+import { getCached, setCached, clearCache } from '../lib/dataCache'
 
 const TAX = 1.08 // 軽減税率8%（食材単価は税抜→原価は税込表示）
 const RECIPE_TYPES = [
@@ -70,9 +71,35 @@ export default function RecipePage() {
     [logout],
   )
 
-  const load = useCallback(async () => {
+  type RecipeCache = {
+    priceMap: Record<string, number>
+    recipeMap: Record<string, DetailItem[]>
+    typeMap: Record<string, string>
+    saleMap: Record<string, number | null>
+    yieldMap: Record<string, number | null>
+    swMap: Record<string, number | null>
+    servingsMap: Record<string, number | null>
+    rowMap: Record<string, number>
+    names: string[]
+    types: string[]
+  }
+
+  const applyRecipeCache = (c: RecipeCache) => {
+    setPriceMap(c.priceMap)
+    setRecipeMap(c.recipeMap)
+    setTypeMap(c.typeMap)
+    setSaleMap(c.saleMap)
+    setYieldMap(c.yieldMap)
+    setSwMap(c.swMap)
+    setServingsMap(c.servingsMap)
+    setRowMap(c.rowMap)
+    setNames(c.names)
+    setTypes(c.types)
+  }
+
+  const load = useCallback(async (silent = false) => {
     if (!token) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const [rd, master] = await Promise.all([
@@ -84,25 +111,27 @@ export default function RecipePage() {
         const name = (r[0] ?? '').trim()
         if (name) prices[name] = Number(r[3]) || 0
       }
-      setPriceMap(prices)
-      setRecipeMap(rd.recipeMap)
-      setTypeMap(rd.typeMap)
-      setSaleMap(rd.saleMap)
-      setYieldMap(rd.yieldMap)
-      setSwMap(rd.servingWeightMap)
-      setServingsMap(rd.servingsMap)
-      setRowMap(rd.rowMap)
-      setNames(rd.names)
-      setTypes(rd.types)
+      const c: RecipeCache = {
+        priceMap: prices, recipeMap: rd.recipeMap, typeMap: rd.typeMap,
+        saleMap: rd.saleMap, yieldMap: rd.yieldMap, swMap: rd.servingWeightMap,
+        servingsMap: rd.servingsMap, rowMap: rd.rowMap,
+        names: rd.names, types: rd.types,
+      }
+      applyRecipeCache(c)
+      setCached('recipe_data', c)
     } catch (e) {
-      handleAuthError(e)
+      if (!silent) handleAuthError(e)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, handleAuthError])
 
   useEffect(() => {
-    load()
+    const c = getCached<RecipeCache>('recipe_data')
+    if (c) applyRecipeCache(c)
+    load(!!c)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load])
 
   const str = (v: number | null | undefined) => (v != null ? String(v) : '')
@@ -164,6 +193,7 @@ export default function RecipePage() {
       await appendRows(token, 'レシピ一覧!A:B', [[nm, newType]])
       setCreating(false)
       setNewName('')
+      clearCache('recipe_data')
       await load()
       openRecipe(nm)
     } catch (e) {
@@ -242,6 +272,7 @@ export default function RecipePage() {
       await appendRows(token, 'レシピ食材明細!A:H', [
         [selected, '新しい食材', 0, 'g', '', '', 0, ''],
       ])
+      clearCache('recipe_data')
       await load()
     } catch (e) {
       handleAuthError(e)
@@ -344,7 +375,7 @@ export default function RecipePage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold text-amber-800">📖 レシピ参照</h1>
-        <button onClick={load} className="text-sm text-stone-500 underline">
+        <button onClick={() => load()} className="text-sm text-stone-500 underline">
           ↻ 更新
         </button>
       </div>

@@ -3,6 +3,7 @@ import { useAuth } from '../lib/auth'
 import { readRange, updateValues, AuthExpiredError } from '../lib/sheets'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 import { usePersistedState } from '../lib/persistState'
+import { getCached, setCached } from '../lib/dataCache'
 
 type FieldKey = 'weight' | 'unitPrice' | 'stock' | 'threshold'
 
@@ -42,7 +43,9 @@ function fmtPerG(x: number): string {
 
 export default function IngredientsPage() {
   const { token, login, logout } = useAuth()
-  const [list, setList] = useState<Ingredient[]>([])
+  const [list, setList] = useState<Ingredient[]>(
+    () => getCached<Ingredient[]>('ing_list') ?? [],
+  )
   const [search, setSearch] = usePersistedState('kbtr_view_ing_search', '')
   const [cat, setCat] = usePersistedState<string | null>('kbtr_view_ing_cat', RECENT_LABEL)
   const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.ingredient))
@@ -66,9 +69,9 @@ export default function IngredientsPage() {
     [logout],
   )
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!token) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const rows = await readRange(token, '食材マスタ!A2:J')
@@ -89,15 +92,16 @@ export default function IngredientsPage() {
         .filter((x) => x.name)
       parsed.sort((a, b) => b.count - a.count)
       setList(parsed)
+      setCached('ing_list', parsed)
     } catch (e) {
-      handleAuthError(e)
+      if (!silent) handleAuthError(e)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [token, handleAuthError])
 
   useEffect(() => {
-    load()
+    load(!!getCached('ing_list'))
   }, [load])
 
   const clearEdit = (row: number, field: FieldKey) => {
@@ -243,7 +247,7 @@ export default function IngredientsPage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold text-amber-800">🥬 食材マスタ</h1>
-        <button onClick={load} className="text-sm text-stone-500 underline">
+        <button onClick={() => load()} className="text-sm text-stone-500 underline">
           ↻ 更新
         </button>
       </div>

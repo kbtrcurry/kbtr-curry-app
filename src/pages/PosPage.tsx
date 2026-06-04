@@ -4,6 +4,7 @@ import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes } from '../lib/recipes'
 import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
 import { usePersistedState } from '../lib/persistState'
+import { getCached, setCached } from '../lib/dataCache'
 
 type Menu = { name: string; price: number; recipe: string }
 type CartItem = { name: string; price: number; qty: number }
@@ -56,7 +57,7 @@ function Numpad({ onKey }: { onKey: (k: string) => void }) {
 
 export default function PosPage() {
   const { token, login, logout } = useAuth()
-  const [menus, setMenus] = useState<Menu[]>([])
+  const [menus, setMenus] = useState<Menu[]>(() => getCached<Menu[]>('pos_menus') ?? [])
   const [qty, setQty] = usePersistedState<Record<string, number>>('kbtr_view_pos_qty', {})
   const [manualItems, setManualItems] = usePersistedState<ManualItem[]>(
     'kbtr_view_pos_manual',
@@ -110,9 +111,9 @@ export default function PosPage() {
     [logout],
   )
 
-  const loadMenus = useCallback(async () => {
+  const loadMenus = useCallback(async (silent = false) => {
     if (!token) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const rows = await readRange(token, 'メニュー構成!A2:D')
@@ -125,15 +126,17 @@ export default function PosPage() {
           recipe: (r[2] ?? '').trim(),
         }))
       setMenus(parsed)
+      setCached('pos_menus', parsed)
     } catch (e) {
-      handleAuthError(e)
+      if (!silent) handleAuthError(e)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [token, handleAuthError])
 
   useEffect(() => {
-    loadMenus()
+    const cached = getCached<Menu[]>('pos_menus')
+    loadMenus(!!cached)
   }, [loadMenus])
 
   const setCount = (name: string, delta: number) => {
