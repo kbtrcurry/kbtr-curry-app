@@ -327,7 +327,7 @@ export default function PosPage() {
   // ── 預り金入力（電卓） ──
   if (step === 'pay') {
     return (
-      <div className="p-4 max-w-md mx-auto min-h-[80svh] flex flex-col">
+      <div className="p-4 max-w-md mx-auto pb-32">
         <button onClick={() => setStep('select')} className="text-stone-500 self-start mb-3">
           ← 戻る
         </button>
@@ -389,13 +389,18 @@ export default function PosPage() {
           クリア
         </button>
 
-        <button
-          onClick={() => setStep('change')}
-          disabled={received === '' || change < 0}
-          className="w-full mt-3 bg-amber-700 text-[#faf9f5] py-5 rounded-2xl font-bold text-xl disabled:opacity-30 active:scale-95 transition-transform"
-        >
-          会計する
-        </button>
+        {/* 会計ボタン：画面下部に固定 */}
+        <div className="fixed bottom-0 left-0 right-0 md:left-52 lg:left-60 bg-white border-t border-stone-200 p-4 z-30">
+          <div className="mx-auto max-w-md">
+            <button
+              onClick={() => setStep('change')}
+              disabled={received === '' || change < 0}
+              className="w-full bg-amber-700 text-[#faf9f5] py-5 rounded-2xl font-bold text-xl disabled:opacity-30 active:scale-95 transition-transform"
+            >
+              会計する
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
