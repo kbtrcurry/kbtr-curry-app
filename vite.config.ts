@@ -15,8 +15,8 @@ export default defineConfig({
         name: 'コバタロカレー',
         short_name: 'コバタロ',
         description: 'コバタロカレー 業務管理システム',
-        theme_color: '#b45309',
-        background_color: '#ffffff',
+        theme_color: '#191817',
+        background_color: '#191817',
         display: 'standalone',
         orientation: 'portrait',
         icons: [

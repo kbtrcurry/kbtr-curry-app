@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
 import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
+import { loadRecipes } from '../lib/recipes'
+import { menuUnitCost, type CostCtx } from '../lib/cost'
 
 type Menu = { name: string; price: number; recipe: string }
 type CartItem = { name: string; price: number; qty: number }
@@ -161,14 +163,46 @@ export default function PosPage() {
         v.price * v.qty,
       ])
       await appendRows(token, '営業記録!A:E', salesRows)
+
+      // 食材原価を集計（メニュー構成×食分×食材単価、税込）
+      let foodCost = 0
+      try {
+        const [rd, master] = await Promise.all([
+          loadRecipes(token),
+          readRange(token, '食材マスタ!A2:D'),
+        ])
+        const priceMap: Record<string, number> = {}
+        for (const r of master) {
+          const nm = (r[0] ?? '').trim()
+          if (nm) priceMap[nm] = Number(r[3]) || 0
+        }
+        const ctx: CostCtx = {
+          recipeMap: rd.recipeMap,
+          priceMap,
+          yieldMap: rd.yieldMap,
+          servingWeightMap: rd.servingWeightMap,
+          servingsMap: rd.servingsMap,
+        }
+        const recipeOf: Record<string, string> = {}
+        for (const m of menus) recipeOf[m.name] = m.recipe
+        for (const [name, v] of Object.entries(agg)) {
+          const unit = menuUnitCost(recipeOf[name] ?? '', ctx)
+          foodCost += unit * v.qty
+        }
+      } catch {
+        foodCost = 0 // 原価が取れなくても締めは続行（後で手修正可）
+      }
+      foodCost = Math.round(foodCost)
+      const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
+
       await appendRows(token, '営業サマリー!A:G', [
         [
           date,
           dayTotal,
-          0,
+          foodCost,
           fee,
-          dayTotal - fee,
-          '',
+          dayTotal - foodCost - fee,
+          rate,
           `${memo}${memo ? ' ' : ''}(${sales.length}組)`,
         ],
       ])
@@ -201,7 +235,7 @@ export default function PosPage() {
         </p>
         <button
           onClick={login}
-          className="bg-amber-700 text-white px-6 py-3 rounded-xl font-semibold shadow active:scale-95 transition-transform"
+          className="bg-amber-700 text-[#faf9f5] px-6 py-3 rounded-xl font-semibold shadow active:scale-95 transition-transform"
         >
           Googleでログイン
         </button>
@@ -274,7 +308,7 @@ export default function PosPage() {
           <button
             onClick={() => setStep('change')}
             disabled={received === '' || change < 0}
-            className="w-full bg-amber-700 text-white py-4 rounded-xl font-bold text-lg disabled:opacity-30 active:scale-95 transition-transform"
+            className="w-full bg-amber-700 text-[#faf9f5] py-4 rounded-xl font-bold text-lg disabled:opacity-30 active:scale-95 transition-transform"
           >
             会計する
           </button>
@@ -297,7 +331,7 @@ export default function PosPage() {
         <div className="w-full max-w-xs space-y-3 mt-6">
           <button
             onClick={handleNextAccount}
-            className="w-full bg-amber-700 text-white py-4 rounded-xl font-bold text-lg active:scale-95 transition-transform"
+            className="w-full bg-amber-700 text-[#faf9f5] py-4 rounded-xl font-bold text-lg active:scale-95 transition-transform"
           >
             次の会計へ →
           </button>
@@ -388,7 +422,7 @@ export default function PosPage() {
                 <span className="w-6 text-center font-bold text-lg">{count}</span>
                 <button
                   onClick={() => setCount(m.name, 1)}
-                  className="w-9 h-9 rounded-full bg-amber-600 text-white text-xl font-bold active:scale-90 transition-transform"
+                  className="w-9 h-9 rounded-full bg-amber-600 text-[#faf9f5] text-xl font-bold active:scale-90 transition-transform"
                 >
                   ＋
                 </button>
@@ -403,20 +437,22 @@ export default function PosPage() {
 
       {/* 合計バー → 会計へ */}
       {menus.length > 0 && (
-        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 w-full max-w-lg bg-white border-t border-stone-200 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-stone-500">合計（{cartCount}点）</span>
-            <span className="text-2xl font-bold text-stone-800">
-              ¥{cartTotal.toLocaleString()}
-            </span>
+        <div className="fixed bottom-16 left-0 right-0 md:bottom-0 md:left-52 lg:left-60 bg-white border-t border-stone-200 z-30">
+          <div className="mx-auto w-full max-w-screen-sm lg:max-w-3xl px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-stone-500">合計（{cartCount}点）</span>
+              <span className="text-2xl font-bold text-stone-800">
+                ¥{cartTotal.toLocaleString()}
+              </span>
+            </div>
+            <button
+              onClick={() => setStep('pay')}
+              disabled={cartCount === 0}
+              className="w-full bg-amber-700 text-[#faf9f5] py-3 rounded-xl font-bold text-lg disabled:opacity-30 active:scale-95 transition-transform"
+            >
+              会計へ
+            </button>
           </div>
-          <button
-            onClick={() => setStep('pay')}
-            disabled={cartCount === 0}
-            className="w-full bg-amber-700 text-white py-3 rounded-xl font-bold text-lg disabled:opacity-30 active:scale-95 transition-transform"
-          >
-            会計へ
-          </button>
         </div>
       )}
 
@@ -471,7 +507,7 @@ export default function PosPage() {
               <button
                 onClick={handleClose}
                 disabled={submitting}
-                className="flex-1 py-3 rounded-xl bg-amber-700 text-white font-bold disabled:opacity-50"
+                className="flex-1 py-3 rounded-xl bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50"
               >
                 {submitting ? '保存中...' : '記録する'}
               </button>
