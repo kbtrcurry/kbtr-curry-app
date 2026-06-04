@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
 import { readRange, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes, type DetailItem } from '../lib/recipes'
+import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 
 type Prep = { name: string; mult: string }
 
@@ -22,7 +23,8 @@ export default function PrepPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
-  const [cat, setCat] = useState<string | null>(null)
+  const [cat, setCat] = useState<string>(RECENT_LABEL)
+  const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.prep))
   const [subTab, setSubTab] = useState<'shopping' | 'recipes'>('shopping')
   const [selected, setSelected] = useState<Prep[]>(() => {
     try {
@@ -70,7 +72,6 @@ export default function PrepPage() {
       setTypeMap(rd.typeMap)
       setNames(rd.names)
       setTypes(rd.types)
-      setCat((c) => c ?? rd.types[0] ?? null)
     } catch (e) {
       handleAuthError(e)
     } finally {
@@ -83,6 +84,7 @@ export default function PrepPage() {
   }, [load])
 
   const addRecipe = (name: string) => {
+    setRecent(pushRecent(RECENT_KEYS.prep, name))
     if (selected.some((s) => s.name === name)) return
     persist([...selected, { name, mult: '1' }])
     setSearch('')
@@ -115,7 +117,9 @@ export default function PrepPage() {
   const listed = (
     search
       ? names.filter((n) => n.includes(search)).slice(0, 50)
-      : names.filter((n) => typeMap[n] === cat)
+      : cat === RECENT_LABEL
+        ? recent.filter((n) => names.includes(n))
+        : names.filter((n) => typeMap[n] === cat)
   ).filter((n) => !selectedNames.has(n))
 
   if (!token) {
@@ -296,7 +300,7 @@ export default function PrepPage() {
           />
           {!search && (
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2 -mx-1 px-1">
-              {types.map((t) => (
+              {[RECENT_LABEL, ...types].map((t) => (
                 <button
                   key={t}
                   onClick={() => setCat(t)}

@@ -75,7 +75,8 @@ export default function PosPage() {
   })
 
   const [closing, setClosing] = useState(false)
-  const [locationFee, setLocationFee] = useState('')
+  const [locationFee, setLocationFee] = useState('5000')
+  const [otherCost, setOtherCost] = useState('')
   const [memo, setMemo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
@@ -180,6 +181,7 @@ export default function PosPage() {
     try {
       const date = todayStr()
       const fee = Number(locationFee) || 0
+      const other = Number(otherCost) || 0
       // メニュー名＋単価で集計（手動金額の異なる単価も区別）
       const agg: Record<string, { name: string; price: number; qty: number }> = {}
       for (const r of sales) {
@@ -227,20 +229,22 @@ export default function PosPage() {
       foodCost = Math.round(foodCost)
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
 
-      await appendRows(token, '営業サマリー!A:G', [
+      await appendRows(token, '営業サマリー!A:H', [
         [
           date,
           dayTotal,
           foodCost,
           fee,
-          dayTotal - foodCost - fee,
+          dayTotal - foodCost - fee - other,
           rate,
           `${memo}${memo ? ' ' : ''}(${sales.length}組)`,
+          other,
         ],
       ])
       localStorage.removeItem(salesKey(date))
       setSales([])
-      setLocationFee('')
+      setLocationFee('5000')
+      setOtherCost('')
       setMemo('')
       setClosing(false)
       setDone(true)
@@ -553,16 +557,29 @@ export default function PosPage() {
               <span>売上合計</span>
               <span className="font-bold">¥{dayTotal.toLocaleString()}</span>
             </div>
-            <div>
-              <label className="block text-sm text-stone-500 mb-1">場所代（円）</label>
-              <input
-                type="number"
-                inputMode="numeric"
-                value={locationFee}
-                onChange={(e) => setLocationFee(e.target.value)}
-                placeholder="0"
-                className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-stone-500 mb-1">場所代（円）</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={locationFee}
+                  onChange={(e) => setLocationFee(e.target.value)}
+                  placeholder="0"
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-stone-500 mb-1">その他経費（円）</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={otherCost}
+                  onChange={(e) => setOtherCost(e.target.value)}
+                  placeholder="0"
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
+                />
+              </div>
             </div>
             <div>
               <label className="block text-sm text-stone-500 mb-1">メモ（任意）</label>

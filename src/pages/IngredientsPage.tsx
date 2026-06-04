@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
 import { readRange, updateValues, AuthExpiredError } from '../lib/sheets'
+import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 
 type FieldKey = 'weight' | 'unitPrice' | 'stock' | 'threshold'
 
@@ -42,7 +43,8 @@ export default function IngredientsPage() {
   const { token, login, logout } = useAuth()
   const [list, setList] = useState<Ingredient[]>([])
   const [search, setSearch] = useState('')
-  const [cat, setCat] = useState<string | null>(null)
+  const [cat, setCat] = useState<string | null>(RECENT_LABEL)
+  const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.ingredient))
   const [onlyUnset, setOnlyUnset] = useState(false)
   const [onlyAlert, setOnlyAlert] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -140,6 +142,7 @@ export default function IngredientsPage() {
         }
       }
       setList((prev) => prev.map((x) => (x.row === ing.row ? updated : x)))
+      setRecent(pushRecent(RECENT_KEYS.ingredient, ing.name))
       clearEdit(ing.row, field)
       setSavedRow(ing.row)
       setTimeout(() => setSavedRow(null), 1500)
@@ -162,12 +165,26 @@ export default function IngredientsPage() {
       .map(([k]) => k)
   })()
 
-  const filtered = list
+  const base = list
     .filter((x) => (search ? x.name.includes(search) : true))
-    .filter((x) => (!search && cat ? (x.category || 'その他') === cat : true))
     .filter((x) => (onlyUnset ? x.pricePerG === null || x.pricePerG === 0 : true))
     .filter((x) => (onlyAlert ? isAlert(x) : true))
-  const shown = search ? filtered : filtered.slice(0, VISIBLE_LIMIT)
+
+  let filtered: Ingredient[]
+  if (search) {
+    filtered = base
+  } else if (cat === RECENT_LABEL) {
+    const order = new Map(recent.map((n, i) => [n, i]))
+    filtered = base
+      .filter((x) => order.has(x.name))
+      .sort((a, b) => order.get(a.name)! - order.get(b.name)!)
+  } else if (cat === null) {
+    filtered = base // 全て
+  } else {
+    filtered = base.filter((x) => (x.category || 'その他') === cat)
+  }
+  const shown =
+    search || cat === RECENT_LABEL ? filtered : filtered.slice(0, VISIBLE_LIMIT)
   const unsetCount = list.filter((x) => x.pricePerG === null || x.pricePerG === 0).length
   const alertCount = list.filter(isAlert).length
 
@@ -243,6 +260,14 @@ export default function IngredientsPage() {
 
       {!search && (
         <div className="flex gap-1.5 overflow-x-auto pb-2 mb-1 -mx-1 px-1">
+          <button
+            onClick={() => setCat(RECENT_LABEL)}
+            className={`shrink-0 px-4 py-2 rounded-full text-sm font-semibold ${
+              cat === RECENT_LABEL ? 'bg-amber-700 text-[#faf9f5]' : 'bg-stone-200 text-stone-700'
+            }`}
+          >
+            {RECENT_LABEL}
+          </button>
           <button
             onClick={() => setCat(null)}
             className={`shrink-0 px-4 py-2 rounded-full text-sm font-semibold ${
@@ -369,14 +394,16 @@ export default function IngredientsPage() {
         })}
       </div>
 
-      {!search && filtered.length > VISIBLE_LIMIT && (
+      {!search && cat !== RECENT_LABEL && filtered.length > VISIBLE_LIMIT && (
         <p className="text-center text-stone-400 text-sm py-4">
           上位 {VISIBLE_LIMIT} 件を表示中。検索で絞り込めます（全 {filtered.length} 件）
         </p>
       )}
       {shown.length === 0 && !loading && (
         <p className="text-center text-stone-400 text-sm py-8">
-          条件に一致する食材がありません
+          {!search && cat === RECENT_LABEL
+            ? 'まだ編集した食材がありません。分類から選ぶか検索してください。'
+            : '条件に一致する食材がありません'}
         </p>
       )}
     </div>

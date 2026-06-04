@@ -10,6 +10,7 @@ import {
   DETAIL_MEMO_COL,
   type DetailItem,
 } from '../lib/recipes'
+import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 
 const TAX = 1.08 // 軽減税率8%（食材単価は税抜→原価は税込表示）
 const RECIPE_TYPES = [
@@ -32,7 +33,8 @@ export default function RecipePage() {
   const [types, setTypes] = useState<string[]>([])
   const [priceMap, setPriceMap] = useState<Record<string, number>>({})
   const [search, setSearch] = useState('')
-  const [cat, setCat] = useState<string | null>(null)
+  const [cat, setCat] = useState<string>(RECENT_LABEL)
+  const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.recipe))
   const [selected, setSelected] = useState<string | null>(null)
 
   // 編集中の値（選択レシピ）
@@ -88,7 +90,6 @@ export default function RecipePage() {
       setRowMap(rd.rowMap)
       setNames(rd.names)
       setTypes(rd.types)
-      setCat((c) => c ?? rd.types[0] ?? null)
     } catch (e) {
       handleAuthError(e)
     } finally {
@@ -104,6 +105,7 @@ export default function RecipePage() {
 
   const openRecipe = (name: string) => {
     setSelected(name)
+    setRecent(pushRecent(RECENT_KEYS.recipe, name))
     setSearch('')
     setSalePrice(str(saleMap[name]))
     setTotalWeight(str(yieldMap[name]))
@@ -281,7 +283,9 @@ export default function RecipePage() {
 
   const listed = search
     ? names.filter((n) => n.includes(search)).slice(0, 50)
-    : names.filter((n) => typeMap[n] === cat)
+    : cat === RECENT_LABEL
+      ? recent.filter((n) => names.includes(n))
+      : names.filter((n) => typeMap[n] === cat)
 
   if (!token) {
     return (
@@ -414,7 +418,7 @@ export default function RecipePage() {
 
           {!search && (
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2 -mx-1 px-1">
-              {types.map((t) => (
+              {[RECENT_LABEL, ...types].map((t) => (
                 <button
                   key={t}
                   onClick={() => setCat(t)}

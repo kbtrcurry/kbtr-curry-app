@@ -3,10 +3,12 @@ import { useAuth } from '../lib/auth'
 import { readRange, AuthExpiredError } from '../lib/sheets'
 
 type Summary = {
+  idx: number
   date: string
   sales: number
   foodCost: number
   locationFee: number
+  otherCost: number
   profit: number
   memo: string
 }
@@ -25,7 +27,7 @@ export default function DashboardPage() {
   const [records, setRecords] = useState<SaleRec[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [openDate, setOpenDate] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
 
   const handleAuthError = useCallback(
     (e: unknown) => {
@@ -45,19 +47,22 @@ export default function DashboardPage() {
     setError(null)
     try {
       const [sum, rec] = await Promise.all([
-        readRange(token, '営業サマリー!A2:G'),
+        readRange(token, '営業サマリー!A2:H'),
         readRange(token, '営業記録!A2:E'),
       ])
       setSummaries(
         sum
-          .filter((r) => (r[0] ?? '').trim())
-          .map((r) => ({
+          .map((r, i) => ({ r, i }))
+          .filter(({ r }) => (r[0] ?? '').trim())
+          .map(({ r, i }) => ({
+            idx: i,
             date: (r[0] ?? '').trim(),
             sales: Number(r[1]) || 0,
             foodCost: Number(r[2]) || 0,
             locationFee: Number(r[3]) || 0,
             profit: Number(r[4]) || 0,
             memo: (r[6] ?? '').trim(),
+            otherCost: Number(r[7]) || 0,
           })),
       )
       setRecords(
@@ -96,8 +101,10 @@ export default function DashboardPage() {
   const months = Object.entries(byMonth).sort((a, b) => a[0].localeCompare(b[0]))
   const monthMax = Math.max(1, ...months.map(([, v]) => v))
 
-  // 営業（新しい順）
-  const sessions = [...summaries].sort((a, b) => b.date.localeCompare(a.date))
+  // 営業（新しい順：日付の降順、同日は入力が新しいものを上に）
+  const sessions = [...summaries].sort(
+    (a, b) => b.date.localeCompare(a.date) || b.idx - a.idx,
+  )
   const recentMax = Math.max(1, ...sessions.map((s) => s.sales))
   // 折れ線用: 直近8回を時系列（古い→新しい）に
   const last8 = sessions.slice(0, 8).reverse()
@@ -223,15 +230,16 @@ export default function DashboardPage() {
             <Section title="営業履歴（タップで詳細）">
               <div className="space-y-2">
                 {sessions.map((s) => {
-                  const open = openDate === s.date
+                  const sid = `${s.date}#${s.idx}`
+                  const open = openId === sid
                   const rate = s.sales > 0 ? (s.foodCost / s.sales) * 100 : null
                   const menus = Object.entries(recByDate[s.date] ?? {}).sort(
                     (a, b) => b[1].amount - a[1].amount,
                   )
                   return (
-                    <div key={s.date} className="border border-stone-200 rounded-xl overflow-hidden">
+                    <div key={sid} className="border border-stone-200 rounded-xl overflow-hidden">
                       <button
-                        onClick={() => setOpenDate(open ? null : s.date)}
+                        onClick={() => setOpenId(open ? null : sid)}
                         className="w-full text-left px-3 py-2.5"
                       >
                         <div className="flex justify-between items-center text-sm mb-1">
@@ -258,6 +266,9 @@ export default function DashboardPage() {
                             <Row label="売上" value={yen(s.sales)} />
                             <Row label="食材原価" value={yen(s.foodCost)} />
                             <Row label="場所代" value={yen(s.locationFee)} />
+                            {s.otherCost > 0 && (
+                              <Row label="その他経費" value={yen(s.otherCost)} />
+                            )}
                             <Row label="利益" value={yen(s.profit)} accent />
                             <Row
                               label="原価率"
