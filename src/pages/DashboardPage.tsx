@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
+import { ConfirmModal } from '../components/ConfirmModal'
+import { Spinner } from '../components/Spinner'
 import {
   readRange,
   updateValues,
@@ -56,6 +58,7 @@ export default function DashboardPage() {
     memo: '',
   })
   const [busy, setBusy] = useState(false)
+  const [confirmTarget, setConfirmTarget] = useState<Summary | null>(null)
 
   const [dashTab, setDashTab] = usePersistedState<DashTab>('kbtr_view_dash_tab', 'summary')
   const [period, setPeriod] = usePersistedState<Period>('kbtr_view_dash_period', 'all')
@@ -160,7 +163,6 @@ export default function DashboardPage() {
 
   const removeSession = async (s: Summary) => {
     if (!token) return
-    if (!confirm(`${s.date} の営業記録を削除しますか？（元に戻せません）`)) return
     setBusy(true)
     setError(null)
     try {
@@ -298,7 +300,7 @@ export default function DashboardPage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold text-amber-800">📊 ダッシュボード</h1>
-        <button onClick={() => load()} className="text-sm text-stone-500 underline">
+        <button onClick={() => load()} className="text-sm text-stone-500 border border-stone-200 rounded-lg px-2 py-1 active:bg-stone-50">
           ↻ 更新
         </button>
       </div>
@@ -314,7 +316,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {loading && <p className="text-stone-400 text-center py-8">読み込み中...</p>}
+      {loading && <Spinner />}
 
       {!loading && !hasData && (
         <div className="text-center text-stone-500 text-sm py-12">
@@ -360,14 +362,14 @@ export default function DashboardPage() {
               <div className="flex items-end gap-2 h-32">
                 {months.map(([mn, v]) => (
                   <div key={mn} className="flex-1 flex flex-col items-center justify-end">
-                    <span className="text-[10px] text-stone-500 mb-1">
+                    <span className="text-xs text-stone-500 mb-1">
                       {Math.round(v / 1000)}k
                     </span>
                     <div
                       className="w-full bg-amber-500 rounded-t"
                       style={{ height: `${(v / monthMax) * 100}%` }}
                     />
-                    <span className="text-[10px] text-stone-400 mt-1">{mn.slice(5)}</span>
+                    <span className="text-xs text-stone-400 mt-1">{mn.slice(5)}</span>
                   </div>
                 ))}
               </div>
@@ -552,7 +554,7 @@ export default function DashboardPage() {
                               ✏️ 編集
                             </button>
                             <button
-                              onClick={() => removeSession(s)}
+                              onClick={() => setConfirmTarget(s)}
                               disabled={busy}
                               className="flex-1 py-2 rounded-lg border border-red-200 text-red-600 font-semibold active:bg-red-50 disabled:opacity-50"
                             >
@@ -623,7 +625,7 @@ export default function DashboardPage() {
                     <tbody>
                       {productStats.map((p) => (
                         <tr key={p.name} className="border-b border-stone-100">
-                          <td className="py-2 pr-2 font-medium text-stone-800 truncate max-w-32">{p.name}</td>
+                          <td className="py-2 pr-2 font-medium text-stone-800">{p.name}</td>
                           <td className="py-2 pr-2 text-right text-stone-700">{p.qty}</td>
                           <td className="py-2 pr-2 text-right text-stone-700">{yen(p.amount)}</td>
                           <td className="py-2 text-right">
@@ -740,6 +742,18 @@ export default function DashboardPage() {
           )}
         </>
       )}
+
+      {confirmTarget && (
+        <ConfirmModal
+          message={`${confirmTarget.date} の営業記録を削除しますか？\n（元に戻せません）`}
+          onConfirm={() => {
+            const s = confirmTarget
+            setConfirmTarget(null)
+            removeSession(s)
+          }}
+          onCancel={() => setConfirmTarget(null)}
+        />
+      )}
     </div>
   )
 }
@@ -787,7 +801,7 @@ function LineChart({
         <g key={i}>
           <circle cx={x(i)} cy={y(d.sales)} r="2.5" fill="#d9824f" />
           <circle cx={x(i)} cy={y(d.profit)} r="2.5" fill="#6bcf8c" />
-          <text x={x(i)} y={H - 8} fontSize="8" textAnchor="middle" fill="#918b81">
+          <text x={x(i)} y={H - 8} fontSize="10" textAnchor="middle" fill="#918b81">
             {d.label}
           </text>
         </g>

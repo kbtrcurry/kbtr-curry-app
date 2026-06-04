@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
+import { Spinner } from '../components/Spinner'
 import { readRange, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes, type DetailItem } from '../lib/recipes'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
@@ -159,7 +160,7 @@ export default function PrepPage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold text-amber-800">🍳 仕込み計画</h1>
-        <button onClick={() => load()} className="text-xs text-stone-400 underline">
+        <button onClick={() => load()} className="text-sm text-stone-500 border border-stone-200 rounded-lg px-2 py-1 active:bg-stone-50">
           ↻ 更新
         </button>
       </div>
@@ -175,7 +176,7 @@ export default function PrepPage() {
         </div>
       )}
 
-      {loading && <p className="text-stone-400 text-center py-8">読み込み中...</p>}
+      {loading && <Spinner />}
 
       {/* 選択中レシピ＋倍率 */}
       {selected.length > 0 && (
@@ -262,7 +263,7 @@ export default function PrepPage() {
                   </td>
                   <td
                     className={`px-3 py-2 text-right font-semibold ${
-                      r.short > 0 ? 'text-red-600' : 'text-stone-400'
+                      r.short > 0 ? 'text-red-600' : 'text-green-600'
                     }`}
                   >
                     {r.short > 0 ? `${fmt(r.short)}${r.unit}` : '足りる'}

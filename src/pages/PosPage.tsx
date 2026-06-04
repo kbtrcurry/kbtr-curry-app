@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
+import { Spinner } from '../components/Spinner'
 import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes } from '../lib/recipes'
 import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
@@ -87,6 +88,7 @@ export default function PosPage() {
   })
 
   const [closing, setClosing] = useState(false)
+  const [closeError, setCloseError] = useState<string | null>(null)
   const [locationFee, setLocationFee] = useState('5000')
   const [otherCost, setOtherCost] = useState('')
   const [torioki, setTorioki] = useState('')
@@ -240,7 +242,7 @@ export default function PosPage() {
   const handleClose = async () => {
     if (!token || sales.length === 0) return
     setSubmitting(true)
-    setError(null)
+    setCloseError(null)
     try {
       const date = todayStr()
       const fee = Number(locationFee) || 0
@@ -300,8 +302,7 @@ export default function PosPage() {
       setDone(true)
       setTimeout(() => setDone(false), 3000)
     } catch (e) {
-      handleAuthError(e)
-      setClosing(false)
+      setCloseError(e instanceof Error ? e.message : '保存に失敗しました')
     } finally {
       setSubmitting(false)
     }
@@ -428,7 +429,7 @@ export default function PosPage() {
     <div className="p-4 pb-40">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold text-amber-800">🛒 レジ</h1>
-        <button onClick={() => loadMenus()} className="text-sm text-stone-500 underline">
+        <button onClick={() => loadMenus()} className="text-sm text-stone-500 border border-stone-200 rounded-lg px-2 py-1 active:bg-stone-50">
           ↻ 更新
         </button>
       </div>
@@ -495,7 +496,7 @@ export default function PosPage() {
         </div>
       )}
 
-      {loading && <p className="text-stone-400 text-center py-8">読み込み中...</p>}
+      {loading && <Spinner />}
 
       {!loading && menus.length === 0 && !error && (
         <p className="text-center py-8 text-stone-500 text-sm">
@@ -508,35 +509,40 @@ export default function PosPage() {
         {menus.map((m) => {
           const count = qty[m.name] ?? 0
           return (
-            <button
-              key={m.name}
-              onClick={() => setCount(m.name, 1)}
-              className={`relative rounded-2xl p-4 text-left min-h-28 flex flex-col justify-between active:scale-95 transition-transform border-2 ${
+            <div
+              className={`rounded-2xl border-2 flex flex-col ${
                 count > 0 ? 'border-amber-500 bg-amber-50' : 'border-stone-300 bg-white'
               }`}
             >
-              <p className="font-bold text-stone-900 leading-snug">{m.name}</p>
-              <p className="text-amber-800 font-bold text-lg mt-1">
-                ¥{m.price.toLocaleString()}
-              </p>
+              <button
+                onClick={() => setCount(m.name, 1)}
+                className="p-4 text-left flex-1 active:brightness-95 transition-all"
+              >
+                <p className="font-bold text-stone-900 leading-snug">{m.name}</p>
+                <p className="text-amber-800 font-bold text-lg mt-1">
+                  ¥{m.price.toLocaleString()}
+                </p>
+              </button>
               {count > 0 && (
-                <>
-                  <span className="absolute top-2 right-2 min-w-7 h-7 px-1.5 rounded-full bg-amber-600 text-[#faf9f5] font-bold flex items-center justify-center">
-                    {count}
-                  </span>
-                  <span
-                    role="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setCount(m.name, -1)
-                    }}
-                    className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-stone-200 text-stone-700 text-xl font-bold flex items-center justify-center"
+                <div className="flex border-t-2 border-amber-200">
+                  <button
+                    onClick={() => setCount(m.name, -1)}
+                    className="flex-1 py-3 text-2xl font-bold text-stone-600 active:bg-stone-100 rounded-bl-xl"
                   >
                     −
+                  </button>
+                  <span className="flex-1 py-3 text-center text-xl font-bold text-amber-700">
+                    {count}
                   </span>
-                </>
+                  <button
+                    onClick={() => setCount(m.name, 1)}
+                    className="flex-1 py-3 text-2xl font-bold text-stone-600 active:bg-stone-100 rounded-br-xl"
+                  >
+                    ＋
+                  </button>
+                </div>
               )}
-            </button>
+            </div>
           )
         })}
 
@@ -715,9 +721,14 @@ export default function PosPage() {
                 className="w-full border border-stone-300 rounded-lg px-3 py-2"
               />
             </div>
+            {closeError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+                {closeError}
+              </div>
+            )}
             <div className="flex gap-3 pt-2">
               <button
-                onClick={() => setClosing(false)}
+                onClick={() => { setClosing(false); setCloseError(null) }}
                 disabled={submitting}
                 className="flex-1 py-3 rounded-xl border border-stone-300 text-stone-600 font-semibold"
               >

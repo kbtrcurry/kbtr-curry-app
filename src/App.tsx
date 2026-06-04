@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { AuthProvider } from './lib/auth'
@@ -17,9 +17,10 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: '売上', icon: '📊' },
   { to: '/ingredients', label: '食材', icon: '🥬' },
   { to: '/recipe', label: 'レシピ', icon: '📖' },
-  { to: '/prep', label: '仕込', icon: '🍳' },
+  { to: '/prep', label: '仕込み', icon: '🍳' },
   { to: '/menu', label: '設定', icon: '⚙️' },
 ]
+const BOTTOM_NAV = NAV_ITEMS.slice(0, 5)
 
 function UpdateButton() {
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW()
@@ -43,6 +44,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         <UpdateButton />
         <span className="text-base font-bold text-amber-800">コバタロカレー</span>
         <span className="text-xs text-stone-400">v{__APP_VERSION__}</span>
+        <Link to="/menu" className="ml-auto text-xl text-stone-400">⚙️</Link>
       </header>
 
       {/* サイドバー（タブレット・デスクトップ） */}
@@ -80,7 +82,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       {/* ボトムナビ（モバイル） */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex z-40">
-        {NAV_ITEMS.map((item) => (
+        {BOTTOM_NAV.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
