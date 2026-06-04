@@ -60,7 +60,7 @@ export default function DashboardPage() {
   const [dashTab, setDashTab] = usePersistedState<DashTab>('kbtr_view_dash_tab', 'summary')
   const [period, setPeriod] = usePersistedState<Period>('kbtr_view_dash_period', 'all')
   const [targetInput, setTargetInput] = useState('')
-  const kbOffset = useKeyboardOffset()
+  useKeyboardOffset()
 
   const handleAuthError = useCallback(
     (e: unknown) => {

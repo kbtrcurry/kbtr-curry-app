@@ -428,7 +428,7 @@ export default function PosPage() {
     <div className="p-4 pb-40">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold text-amber-800">🛒 レジ</h1>
-        <button onClick={loadMenus} className="text-sm text-stone-500 underline">
+        <button onClick={() => loadMenus()} className="text-sm text-stone-500 underline">
           ↻ 更新
         </button>
       </div>
