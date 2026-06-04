@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
-import { readRange, AuthExpiredError } from '../lib/sheets'
+import {
+  readRange,
+  updateValues,
+  deleteRow,
+  getSheetId,
+  AuthExpiredError,
+} from '../lib/sheets'
 import { usePersistedState } from '../lib/persistState'
 
 type Summary = {
@@ -32,6 +38,15 @@ export default function DashboardPage() {
     'kbtr_view_dash_open',
     null,
   )
+  const [editId, setEditId] = useState<string | null>(null)
+  const [edit, setEdit] = useState({
+    sales: '',
+    foodCost: '',
+    locationFee: '',
+    otherCost: '',
+    memo: '',
+  })
+  const [busy, setBusy] = useState(false)
 
   const handleAuthError = useCallback(
     (e: unknown) => {
@@ -89,6 +104,59 @@ export default function DashboardPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  const startEdit = (s: Summary, sid: string) => {
+    setEditId(sid)
+    setEdit({
+      sales: String(s.sales),
+      foodCost: String(s.foodCost),
+      locationFee: String(s.locationFee),
+      otherCost: String(s.otherCost),
+      memo: s.memo,
+    })
+  }
+
+  const saveEdit = async (s: Summary) => {
+    if (!token) return
+    setBusy(true)
+    setError(null)
+    try {
+      const sales = Number(edit.sales) || 0
+      const foodCost = Number(edit.foodCost) || 0
+      const fee = Number(edit.locationFee) || 0
+      const other = Number(edit.otherCost) || 0
+      const profit = sales - foodCost - fee - other
+      const rate = sales > 0 ? Math.round((foodCost / sales) * 1000) / 10 : 0
+      const row = s.idx + 2 // A2 が先頭データ行
+      await updateValues(token, `営業サマリー!B${row}:H${row}`, [
+        [sales, foodCost, fee, profit, rate, edit.memo, other],
+      ])
+      setEditId(null)
+      await load()
+    } catch (e) {
+      handleAuthError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeSession = async (s: Summary) => {
+    if (!token) return
+    if (!confirm(`${s.date} の営業記録を削除しますか？（元に戻せません）`)) return
+    setBusy(true)
+    setError(null)
+    try {
+      const sheetId = await getSheetId(token, '営業サマリー')
+      await deleteRow(token, sheetId, s.idx + 1) // 0始まり行（ヘッダー=0）
+      setOpenId(null)
+      setEditId(null)
+      await load()
+    } catch (e) {
+      handleAuthError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // 集計
   const tm = thisMonth()
@@ -264,7 +332,64 @@ export default function DashboardPage() {
                         </div>
                       </button>
 
-                      {open && (
+                      {open && editId === sid && (
+                        <div className="px-3 pb-3 pt-2 border-t border-stone-100 text-sm space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <EditField
+                              label="売上"
+                              value={edit.sales}
+                              onChange={(v) => setEdit((e) => ({ ...e, sales: v }))}
+                            />
+                            <EditField
+                              label="食材原価"
+                              value={edit.foodCost}
+                              onChange={(v) => setEdit((e) => ({ ...e, foodCost: v }))}
+                            />
+                            <EditField
+                              label="場所代"
+                              value={edit.locationFee}
+                              onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))}
+                            />
+                            <EditField
+                              label="その他経費"
+                              value={edit.otherCost}
+                              onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-stone-500 mb-1">メモ</label>
+                            <input
+                              type="text"
+                              value={edit.memo}
+                              onChange={(e) =>
+                                setEdit((p) => ({ ...p, memo: e.target.value }))
+                              }
+                              className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                            />
+                          </div>
+                          <p className="text-xs text-stone-400">
+                            利益 = 売上 − 食材原価 − 場所代 − その他経費（自動計算）
+                          </p>
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={() => setEditId(null)}
+                              disabled={busy}
+                              className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold"
+                            >
+                              キャンセル
+                            </button>
+                            <button
+                              onClick={() => saveEdit(s)}
+                              disabled={busy}
+                              className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50"
+                            >
+                              {busy ? '保存中...' : '保存'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {open && editId !== sid && (
                         <div className="px-3 pb-3 pt-1 border-t border-stone-100 text-sm">
                           <div className="grid grid-cols-2 gap-x-4 gap-y-1 my-2">
                             <Row label="売上" value={yen(s.sales)} />
@@ -283,7 +408,7 @@ export default function DashboardPage() {
                             <p className="text-stone-500 mb-2">メモ: {s.memo}</p>
                           )}
                           {menus.length > 0 && (
-                            <div className="bg-stone-50 rounded-lg p-2">
+                            <div className="bg-stone-50 rounded-lg p-2 mb-2">
                               <p className="text-xs text-stone-400 mb-1">メニュー別</p>
                               {menus.map(([mn, v]) => (
                                 <div
@@ -300,6 +425,22 @@ export default function DashboardPage() {
                               ))}
                             </div>
                           )}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => startEdit(s, sid)}
+                              disabled={busy}
+                              className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-700 font-semibold active:bg-stone-50"
+                            >
+                              ✏️ 編集
+                            </button>
+                            <button
+                              onClick={() => removeSession(s)}
+                              disabled={busy}
+                              className="flex-1 py-2 rounded-lg border border-red-200 text-red-600 font-semibold active:bg-red-50 disabled:opacity-50"
+                            >
+                              🗑️ 削除
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -383,6 +524,29 @@ function LineChart({
         </g>
       ))}
     </svg>
+  )
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-stone-500 mb-1">{label}（円）</label>
+      <input
+        type="number"
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full border border-stone-300 rounded-lg px-3 py-2 text-right"
+      />
+    </div>
   )
 }
 

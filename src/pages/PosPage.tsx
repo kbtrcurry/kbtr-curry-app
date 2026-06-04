@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
 import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes } from '../lib/recipes'
-import { menuUnitCost, type CostCtx } from '../lib/cost'
+import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
 import { usePersistedState } from '../lib/persistState'
 
 type Menu = { name: string; price: number; recipe: string }
@@ -20,6 +20,8 @@ type Receipt = {
 const DISABLED_FLAGS = ['off', 'false', '無効', 'no', '0']
 const QUICK_AMOUNTS = [1000, 5000, 10000]
 const MANUAL_LABEL = '金額入力'
+// 取り置きのサービス品（無料）。このレシピの一食原価 × 件数 をその他経費に加算する
+const TORIOKI_RECIPE = 'うずらのアチャール'
 
 function todayStr(): string {
   const d = new Date()
@@ -84,6 +86,9 @@ export default function PosPage() {
   const [closing, setClosing] = useState(false)
   const [locationFee, setLocationFee] = useState('5000')
   const [otherCost, setOtherCost] = useState('')
+  const [torioki, setTorioki] = useState('')
+  const [acharCost, setAcharCost] = useState<number | null>(null)
+  const [acharLoading, setAcharLoading] = useState(false)
   const [memo, setMemo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
@@ -181,6 +186,44 @@ export default function PosPage() {
     setStep('select')
   }
 
+  // 原価計算用コンテキスト（レシピ＋食材単価）を読み込む
+  const buildCtx = useCallback(async (): Promise<CostCtx> => {
+    if (!token) throw new Error('未ログイン')
+    const [rd, master] = await Promise.all([
+      loadRecipes(token),
+      readRange(token, '食材マスタ!A2:D'),
+    ])
+    const priceMap: Record<string, number> = {}
+    for (const r of master) {
+      const nm = (r[0] ?? '').trim()
+      if (nm) priceMap[nm] = Number(r[3]) || 0
+    }
+    return {
+      recipeMap: rd.recipeMap,
+      priceMap,
+      yieldMap: rd.yieldMap,
+      servingWeightMap: rd.servingWeightMap,
+      servingsMap: rd.servingsMap,
+    }
+  }, [token])
+
+  // 締め画面を開く（取り置きサービス品の一食原価を取得）
+  const openClosing = async () => {
+    setClosing(true)
+    setAcharLoading(true)
+    try {
+      const ctx = await buildCtx()
+      setAcharCost(Math.round(perServingCost(TORIOKI_RECIPE, ctx)))
+    } catch {
+      setAcharCost(null)
+    } finally {
+      setAcharLoading(false)
+    }
+  }
+
+  const toriokiN = Number(torioki) || 0
+  const toriokiCost = toriokiN * (acharCost ?? 0)
+
   const handleClose = async () => {
     if (!token || sales.length === 0) return
     setSubmitting(true)
@@ -188,7 +231,7 @@ export default function PosPage() {
     try {
       const date = todayStr()
       const fee = Number(locationFee) || 0
-      const other = Number(otherCost) || 0
+      const misc = Number(otherCost) || 0 // 手入力のその他経費
       // メニュー名＋単価で集計（手動金額の異なる単価も区別）
       const agg: Record<string, { name: string; price: number; qty: number }> = {}
       for (const r of sales) {
@@ -208,50 +251,35 @@ export default function PosPage() {
       await appendRows(token, '営業記録!A:E', salesRows)
 
       let foodCost = 0
+      let serviceCost = 0 // 取り置きのサービス品（うずらのアチャール）原価
       try {
-        const [rd, master] = await Promise.all([
-          loadRecipes(token),
-          readRange(token, '食材マスタ!A2:D'),
-        ])
-        const priceMap: Record<string, number> = {}
-        for (const r of master) {
-          const nm = (r[0] ?? '').trim()
-          if (nm) priceMap[nm] = Number(r[3]) || 0
-        }
-        const ctx: CostCtx = {
-          recipeMap: rd.recipeMap,
-          priceMap,
-          yieldMap: rd.yieldMap,
-          servingWeightMap: rd.servingWeightMap,
-          servingsMap: rd.servingsMap,
-        }
+        const ctx = await buildCtx()
         const recipeOf: Record<string, string> = {}
         for (const m of menus) recipeOf[m.name] = m.recipe
         for (const v of Object.values(agg)) {
           foodCost += menuUnitCost(recipeOf[v.name] ?? '', ctx) * v.qty
         }
+        serviceCost = toriokiN * perServingCost(TORIOKI_RECIPE, ctx)
       } catch {
         foodCost = 0
+        serviceCost = toriokiN * (acharCost ?? 0)
       }
       foodCost = Math.round(foodCost)
+      serviceCost = Math.round(serviceCost)
+      const other = misc + serviceCost // その他経費 = 手入力分 ＋ 取り置きサービス分
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
+      const note = `${memo}${memo ? ' ' : ''}(${sales.length}組${
+        toriokiN > 0 ? ` 取り置き${toriokiN}件` : ''
+      })`
 
       await appendRows(token, '営業サマリー!A:H', [
-        [
-          date,
-          dayTotal,
-          foodCost,
-          fee,
-          dayTotal - foodCost - fee - other,
-          rate,
-          `${memo}${memo ? ' ' : ''}(${sales.length}組)`,
-          other,
-        ],
+        [date, dayTotal, foodCost, fee, dayTotal - foodCost - fee - other, rate, note, other],
       ])
       localStorage.removeItem(salesKey(date))
       setSales([])
       setLocationFee('5000')
       setOtherCost('')
+      setTorioki('')
       setMemo('')
       setClosing(false)
       setDone(true)
@@ -396,7 +424,7 @@ export default function PosPage() {
           <span className="font-bold text-stone-800">¥{dayTotal.toLocaleString()}</span>
         </span>
         <button
-          onClick={() => setClosing(true)}
+          onClick={openClosing}
           disabled={sales.length === 0}
           className="text-amber-700 font-semibold underline disabled:opacity-30"
         >
@@ -588,6 +616,45 @@ export default function PosPage() {
                 />
               </div>
             </div>
+
+            {/* 取り置きサービス（うずらのアチャール） */}
+            <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-3">
+              <div className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-sm text-stone-500 mb-1">取り置き件数</label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={torioki}
+                    onChange={(e) => setTorioki(e.target.value)}
+                    placeholder="0"
+                    className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
+                  />
+                </div>
+                <div className="flex-1 text-sm text-stone-600 pb-1">
+                  {acharLoading ? (
+                    <span className="text-stone-400">原価を計算中…</span>
+                  ) : acharCost === null ? (
+                    <span className="text-amber-600">
+                      「{TORIOKI_RECIPE}」のレシピ未登録（原価0）
+                    </span>
+                  ) : (
+                    <>
+                      {TORIOKI_RECIPE} ¥{acharCost.toLocaleString()}/食
+                      <br />
+                      サービス分{' '}
+                      <span className="font-bold text-stone-800">
+                        ¥{toriokiCost.toLocaleString()}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-stone-400 mt-1">
+                ※ サービス分はその他経費に自動加算されます
+              </p>
+            </div>
+
             <div>
               <label className="block text-sm text-stone-500 mb-1">メモ（任意）</label>
               <input

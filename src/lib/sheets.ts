@@ -52,6 +52,45 @@ export async function updateValues(
   return handle(res)
 }
 
+/** シート名から sheetId（数値ID）を取得する。 */
+export async function getSheetId(token: string, title: string): Promise<number> {
+  const res = await fetch(`${BASE}?fields=sheets(properties(sheetId,title))`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const data = await handle(res)
+  const sheet = (data.sheets ?? []).find(
+    (s: { properties?: { title?: string } }) => s.properties?.title === title,
+  )
+  if (!sheet) throw new Error(`シート「${title}」が見つかりません`)
+  return sheet.properties.sheetId as number
+}
+
+/** 指定シートの行を物理削除する。rowIndex は0始まり（ヘッダー行=0）。 */
+export async function deleteRow(token: string, sheetId: number, rowIndex: number) {
+  const res = await fetch(`${BASE}:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex,
+              endIndex: rowIndex + 1,
+            },
+          },
+        },
+      ],
+    }),
+  })
+  return handle(res)
+}
+
 /** 指定範囲の末尾に行を追加する。 */
 export async function appendRows(
   token: string,
