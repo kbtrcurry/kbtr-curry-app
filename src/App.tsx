@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
+import { useRegisterSW } from 'virtual:pwa-register/react'
 import { AuthProvider } from './lib/auth'
 import PosPage from './pages/PosPage'
 import DashboardPage from './pages/DashboardPage'
@@ -20,13 +21,35 @@ const NAV_ITEMS = [
   { to: '/menu', label: '設定', icon: '⚙️' },
 ]
 
+function UpdateButton() {
+  const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW()
+
+  return (
+    <button
+      onClick={() => needRefresh ? updateServiceWorker(true) : window.location.reload()}
+      title={needRefresh ? '新しいバージョンがあります。タップして更新' : `v${__APP_VERSION__} — タップで再読み込み`}
+      className={`text-xl leading-none transition-transform active:scale-90 ${needRefresh ? 'animate-bounce' : ''}`}
+    >
+      🍛
+    </button>
+  )
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-svh md:flex">
+      {/* モバイルヘッダー */}
+      <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-stone-200 bg-stone-900">
+        <UpdateButton />
+        <span className="text-base font-bold text-amber-800">コバタロカレー</span>
+        <span className="text-xs text-stone-400">v{__APP_VERSION__}</span>
+      </header>
+
       {/* サイドバー（タブレット・デスクトップ） */}
       <aside className="hidden md:flex md:flex-col md:w-52 lg:w-60 shrink-0 border-r border-stone-200 sticky top-0 h-svh">
-        <div className="px-4 py-4 text-lg font-bold text-amber-800 flex items-baseline gap-2">
-          🍛 コバタロカレー
+        <div className="px-4 py-4 text-lg font-bold text-amber-800 flex items-center gap-2">
+          <UpdateButton />
+          コバタロカレー
           <span className="text-xs font-normal text-stone-400">v{__APP_VERSION__}</span>
         </div>
         <nav className="flex-1 px-2 space-y-1 overflow-y-auto">
