@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
 import { readRange, AuthExpiredError } from '../lib/sheets'
+import { usePersistedState } from '../lib/persistState'
 
 type Summary = {
   idx: number
@@ -27,7 +28,10 @@ export default function DashboardPage() {
   const [records, setRecords] = useState<SaleRec[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = usePersistedState<string | null>(
+    'kbtr_view_dash_open',
+    null,
+  )
 
   const handleAuthError = useCallback(
     (e: unknown) => {

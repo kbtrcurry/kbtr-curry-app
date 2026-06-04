@@ -11,6 +11,7 @@ import {
   type DetailItem,
 } from '../lib/recipes'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
+import { usePersistedState } from '../lib/persistState'
 
 const TAX = 1.08 // 軽減税率8%（食材単価は税抜→原価は税込表示）
 const RECIPE_TYPES = [
@@ -32,10 +33,13 @@ export default function RecipePage() {
   const [names, setNames] = useState<string[]>([])
   const [types, setTypes] = useState<string[]>([])
   const [priceMap, setPriceMap] = useState<Record<string, number>>({})
-  const [search, setSearch] = useState('')
-  const [cat, setCat] = useState<string>(RECENT_LABEL)
+  const [search, setSearch] = usePersistedState('kbtr_view_recipe_search', '')
+  const [cat, setCat] = usePersistedState<string>('kbtr_view_recipe_cat', RECENT_LABEL)
   const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.recipe))
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = usePersistedState<string | null>(
+    'kbtr_view_recipe_selected',
+    null,
+  )
 
   // 編集中の値（選択レシピ）
   const [salePrice, setSalePrice] = useState('')
@@ -107,11 +111,18 @@ export default function RecipePage() {
     setSelected(name)
     setRecent(pushRecent(RECENT_KEYS.recipe, name))
     setSearch('')
-    setSalePrice(str(saleMap[name]))
-    setTotalWeight(str(yieldMap[name]))
-    setServingWeight(str(swMap[name]))
-    setServings(str(servingsMap[name]))
   }
+
+  // 選択レシピの編集フィールドを同期（クリック時・復元時・再読込時）
+  useEffect(() => {
+    if (!selected) return
+    setSalePrice(str(saleMap[selected]))
+    setTotalWeight(str(yieldMap[selected]))
+    setServingWeight(str(swMap[selected]))
+    setServings(str(servingsMap[selected]))
+    // rowMap は読み込み完了時に更新される。保存時は変わらないので入力中の値を壊さない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, rowMap])
 
   // セル保存（汎用）
   const saveCell = async (

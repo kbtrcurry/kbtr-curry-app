@@ -3,6 +3,7 @@ import { useAuth } from '../lib/auth'
 import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes } from '../lib/recipes'
 import { menuUnitCost, type CostCtx } from '../lib/cost'
+import { usePersistedState } from '../lib/persistState'
 
 type Menu = { name: string; price: number; recipe: string }
 type CartItem = { name: string; price: number; qty: number }
@@ -54,13 +55,19 @@ function Numpad({ onKey }: { onKey: (k: string) => void }) {
 export default function PosPage() {
   const { token, login, logout } = useAuth()
   const [menus, setMenus] = useState<Menu[]>([])
-  const [qty, setQty] = useState<Record<string, number>>({})
-  const [manualItems, setManualItems] = useState<ManualItem[]>([])
+  const [qty, setQty] = usePersistedState<Record<string, number>>('kbtr_view_pos_qty', {})
+  const [manualItems, setManualItems] = usePersistedState<ManualItem[]>(
+    'kbtr_view_pos_manual',
+    [],
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [step, setStep] = useState<'select' | 'pay' | 'change'>('select')
-  const [received, setReceived] = useState('')
+  const [step, setStep] = usePersistedState<'select' | 'pay' | 'change'>(
+    'kbtr_view_pos_step',
+    'select',
+  )
+  const [received, setReceived] = usePersistedState('kbtr_view_pos_received', '')
 
   // 手動金額モーダル
   const [manualOpen, setManualOpen] = useState(false)

@@ -3,6 +3,7 @@ import { useAuth } from '../lib/auth'
 import { readRange, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes, type DetailItem } from '../lib/recipes'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
+import { usePersistedState } from '../lib/persistState'
 
 type Prep = { name: string; mult: string }
 
@@ -22,10 +23,13 @@ export default function PrepPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [search, setSearch] = useState('')
-  const [cat, setCat] = useState<string>(RECENT_LABEL)
+  const [search, setSearch] = usePersistedState('kbtr_view_prep_search', '')
+  const [cat, setCat] = usePersistedState<string>('kbtr_view_prep_cat', RECENT_LABEL)
   const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.prep))
-  const [subTab, setSubTab] = useState<'shopping' | 'recipes'>('shopping')
+  const [subTab, setSubTab] = usePersistedState<'shopping' | 'recipes'>(
+    'kbtr_view_prep_subtab',
+    'shopping',
+  )
   const [selected, setSelected] = useState<Prep[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(PREP_KEY) ?? '[]')

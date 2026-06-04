@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
 import { readRange, updateValues, AuthExpiredError } from '../lib/sheets'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
+import { usePersistedState } from '../lib/persistState'
 
 type FieldKey = 'weight' | 'unitPrice' | 'stock' | 'threshold'
 
@@ -42,8 +43,8 @@ function fmtPerG(x: number): string {
 export default function IngredientsPage() {
   const { token, login, logout } = useAuth()
   const [list, setList] = useState<Ingredient[]>([])
-  const [search, setSearch] = useState('')
-  const [cat, setCat] = useState<string | null>(RECENT_LABEL)
+  const [search, setSearch] = usePersistedState('kbtr_view_ing_search', '')
+  const [cat, setCat] = usePersistedState<string | null>('kbtr_view_ing_cat', RECENT_LABEL)
   const [recent, setRecent] = useState<string[]>(() => getRecent(RECENT_KEYS.ingredient))
   const [onlyUnset, setOnlyUnset] = useState(false)
   const [onlyAlert, setOnlyAlert] = useState(false)
