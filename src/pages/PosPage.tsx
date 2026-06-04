@@ -5,6 +5,8 @@ import { loadRecipes } from '../lib/recipes'
 import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
 import { usePersistedState } from '../lib/persistState'
 import { getCached, setCached } from '../lib/dataCache'
+import { getEventData, patchEventData } from '../lib/eventData'
+import { useKeyboardOffset } from '../lib/useKeyboardOffset'
 
 type Menu = { name: string; price: number; recipe: string }
 type CartItem = { name: string; price: number; qty: number }
@@ -93,6 +95,14 @@ export default function PosPage() {
   const [memo, setMemo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
+
+  // 仕入れ実費（今日分・localStorageから初期化）
+  const [costStr, setCostStr] = useState(() => {
+    const c = getEventData(todayStr()).cost
+    return c != null && c > 0 ? String(c) : ''
+  })
+
+  const kbOffset = useKeyboardOffset()
 
   const persistSales = useCallback((next: Receipt[]) => {
     setSales(next)
@@ -278,6 +288,8 @@ export default function PosPage() {
       await appendRows(token, '営業サマリー!A:H', [
         [date, dayTotal, foodCost, fee, dayTotal - foodCost - fee - other, rate, note, other],
       ])
+      // 組数と仕入れ実費をlocalStorageに保存（分析用）
+      patchEventData(date, { groups: sales.length })
       localStorage.removeItem(salesKey(date))
       setSales([])
       setLocationFee('5000')
@@ -421,18 +433,50 @@ export default function PosPage() {
         </button>
       </div>
 
-      <div className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-2 mb-4">
-        <span className="text-stone-500">
-          本日 <span className="font-bold text-stone-800">{sales.length}</span> 組 / 売上{' '}
-          <span className="font-bold text-stone-800">¥{dayTotal.toLocaleString()}</span>
-        </span>
-        <button
-          onClick={openClosing}
-          disabled={sales.length === 0}
-          className="text-amber-700 font-semibold underline disabled:opacity-30"
-        >
-          締める
-        </button>
+      <div className="bg-stone-50 rounded-lg px-3 py-2 mb-4 space-y-2">
+        {/* 売上サマリー行 */}
+        <div className="flex items-center justify-between">
+          <span className="text-stone-500">
+            本日 <span className="font-bold text-stone-800">{sales.length}</span> 組 / 売上{' '}
+            <span className="font-bold text-stone-800">¥{dayTotal.toLocaleString()}</span>
+          </span>
+          <button
+            onClick={openClosing}
+            disabled={sales.length === 0}
+            className="text-amber-700 font-semibold underline disabled:opacity-30"
+          >
+            締める
+          </button>
+        </div>
+        {/* 仕入れ実費・粗利行 */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-stone-500 shrink-0">仕入れ実費</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={costStr}
+            onChange={(e) => {
+              setCostStr(e.target.value)
+              patchEventData(todayStr(), { cost: Number(e.target.value) || 0 })
+            }}
+            placeholder="0"
+            className="w-24 border border-stone-300 rounded-lg px-2 py-1 text-right text-sm bg-white"
+          />
+          <span className="text-xs text-stone-400">円</span>
+          {Number(costStr) > 0 && (
+            <span className="text-xs text-stone-600 ml-1">
+              粗利{' '}
+              <b className={dayTotal - Number(costStr) >= 0 ? 'text-green-700' : 'text-red-600'}>
+                ¥{(dayTotal - Number(costStr)).toLocaleString()}
+              </b>
+              {dayTotal > 0 && (
+                <span className="text-stone-400 ml-1">
+                  ({Math.round((Number(costStr) / dayTotal) * 100)}%)
+                </span>
+              )}
+            </span>
+          )}
+        </div>
       </div>
 
       {done && (
@@ -585,7 +629,10 @@ export default function PosPage() {
       {/* 締めモーダル */}
       {closing && (
         <div className="fixed inset-0 bg-black/50 flex items-end md:items-center justify-center z-50 md:p-4">
-          <div className="bg-white w-full max-w-lg rounded-t-2xl md:rounded-2xl p-5 space-y-4">
+          <div
+            className="bg-white w-full max-w-lg rounded-t-2xl md:rounded-2xl pt-5 px-5 space-y-4 overflow-y-auto max-h-[90svh]"
+            style={{ paddingBottom: Math.max(20, kbOffset + 20) }}
+          >
             <h2 className="text-lg font-bold text-stone-900">本日の締め</h2>
             <div className="flex justify-between text-stone-600">
               <span>会計組数</span>
