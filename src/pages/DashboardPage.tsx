@@ -8,6 +8,7 @@ type Summary = {
   foodCost: number
   locationFee: number
   profit: number
+  memo: string
 }
 type SaleRec = { date: string; menu: string; qty: number; subtotal: number }
 
@@ -24,6 +25,7 @@ export default function DashboardPage() {
   const [records, setRecords] = useState<SaleRec[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openDate, setOpenDate] = useState<string | null>(null)
 
   const handleAuthError = useCallback(
     (e: unknown) => {
@@ -55,6 +57,7 @@ export default function DashboardPage() {
             foodCost: Number(r[2]) || 0,
             locationFee: Number(r[3]) || 0,
             profit: Number(r[4]) || 0,
+            memo: (r[6] ?? '').trim(),
           })),
       )
       setRecords(
@@ -93,9 +96,21 @@ export default function DashboardPage() {
   const months = Object.entries(byMonth).sort((a, b) => a[0].localeCompare(b[0]))
   const monthMax = Math.max(1, ...months.map(([, v]) => v))
 
-  // 直近の営業（最大8回）
-  const recent = [...summaries].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
-  const recentMax = Math.max(1, ...recent.map((s) => s.sales))
+  // 営業（新しい順）
+  const sessions = [...summaries].sort((a, b) => b.date.localeCompare(a.date))
+  const recentMax = Math.max(1, ...sessions.map((s) => s.sales))
+  // 折れ線用: 直近8回を時系列（古い→新しい）に
+  const last8 = sessions.slice(0, 8).reverse()
+
+  // 日付ごとのメニュー別内訳
+  const recByDate: Record<string, Record<string, { qty: number; amount: number }>> = {}
+  for (const r of records) {
+    if (!recByDate[r.date]) recByDate[r.date] = {}
+    const d = recByDate[r.date]
+    if (!d[r.menu]) d[r.menu] = { qty: 0, amount: 0 }
+    d[r.menu].qty += r.qty
+    d[r.menu].amount += r.subtotal
+  }
 
   // メニュー別販売数
   const byMenu: Record<string, number> = {}
@@ -182,28 +197,99 @@ export default function DashboardPage() {
             </Section>
           )}
 
-          {/* 直近の営業 */}
-          {recent.length > 0 && (
-            <Section title="直近の営業（売上・利益）">
+          {/* 売上・利益の推移（折れ線） */}
+          {last8.length > 0 && (
+            <Section title="売上・利益の推移（直近8回）">
+              <LineChart
+                data={last8.map((s) => ({
+                  label: s.date.slice(5).replace('-', '/'),
+                  sales: s.sales,
+                  profit: s.profit,
+                }))}
+              />
+              <div className="flex gap-4 justify-center text-xs mt-1">
+                <span className="text-stone-500">
+                  <span style={{ color: '#d9824f' }}>●</span> 売上
+                </span>
+                <span className="text-stone-500">
+                  <span style={{ color: '#6bcf8c' }}>●</span> 利益
+                </span>
+              </div>
+            </Section>
+          )}
+
+          {/* 営業履歴（各回タップで詳細） */}
+          {sessions.length > 0 && (
+            <Section title="営業履歴（タップで詳細）">
               <div className="space-y-2">
-                {recent.map((s) => (
-                  <div key={s.date} className="text-sm">
-                    <div className="flex justify-between text-stone-600 mb-0.5">
-                      <span>{s.date}</span>
-                      <span>
-                        売上 <b className="text-stone-800">{yen(s.sales)}</b>
-                        <span className="text-stone-400 mx-1">/</span>
-                        利益 <b className="text-green-700">{yen(s.profit)}</b>
-                      </span>
+                {sessions.map((s) => {
+                  const open = openDate === s.date
+                  const rate = s.sales > 0 ? (s.foodCost / s.sales) * 100 : null
+                  const menus = Object.entries(recByDate[s.date] ?? {}).sort(
+                    (a, b) => b[1].amount - a[1].amount,
+                  )
+                  return (
+                    <div key={s.date} className="border border-stone-200 rounded-xl overflow-hidden">
+                      <button
+                        onClick={() => setOpenDate(open ? null : s.date)}
+                        className="w-full text-left px-3 py-2.5"
+                      >
+                        <div className="flex justify-between items-center text-sm mb-1">
+                          <span className="font-semibold text-stone-800">
+                            {open ? '▾' : '▸'} {s.date}
+                          </span>
+                          <span className="text-stone-600">
+                            売上 <b className="text-stone-900">{yen(s.sales)}</b>
+                            <span className="text-stone-300 mx-1">/</span>
+                            利益 <b className="text-green-700">{yen(s.profit)}</b>
+                          </span>
+                        </div>
+                        <div className="h-2 bg-stone-100 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-amber-500"
+                            style={{ width: `${(s.sales / recentMax) * 100}%` }}
+                          />
+                        </div>
+                      </button>
+
+                      {open && (
+                        <div className="px-3 pb-3 pt-1 border-t border-stone-100 text-sm">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 my-2">
+                            <Row label="売上" value={yen(s.sales)} />
+                            <Row label="食材原価" value={yen(s.foodCost)} />
+                            <Row label="場所代" value={yen(s.locationFee)} />
+                            <Row label="利益" value={yen(s.profit)} accent />
+                            <Row
+                              label="原価率"
+                              value={rate != null ? `${rate.toFixed(1)}%` : '—'}
+                            />
+                          </div>
+                          {s.memo && (
+                            <p className="text-stone-500 mb-2">メモ: {s.memo}</p>
+                          )}
+                          {menus.length > 0 && (
+                            <div className="bg-stone-50 rounded-lg p-2">
+                              <p className="text-xs text-stone-400 mb-1">メニュー別</p>
+                              {menus.map(([mn, v]) => (
+                                <div
+                                  key={mn}
+                                  className="flex justify-between py-0.5 text-stone-700"
+                                >
+                                  <span className="truncate">
+                                    {mn} <span className="text-stone-400">×{v.qty}</span>
+                                  </span>
+                                  <span className="font-medium text-stone-800 shrink-0 ml-2">
+                                    {yen(v.amount)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="h-2 bg-stone-100 rounded overflow-hidden flex">
-                      <div
-                        className="bg-amber-500"
-                        style={{ width: `${(s.sales / recentMax) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </Section>
           )}
@@ -240,6 +326,58 @@ function Kpi({ label, value, accent }: { label: string; value: string; accent?: 
       <p className={`text-xl font-bold ${accent ? 'text-green-700' : 'text-stone-900'}`}>
         {value}
       </p>
+    </div>
+  )
+}
+
+function LineChart({
+  data,
+}: {
+  data: { label: string; sales: number; profit: number }[]
+}) {
+  const W = 320
+  const H = 170
+  const padL = 10
+  const padR = 10
+  const padT = 14
+  const padB = 26
+  const n = data.length
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+  const sales = data.map((d) => d.sales)
+  const profit = data.map((d) => d.profit)
+  const maxV = Math.max(1, ...sales, ...profit, 0)
+  const minV = Math.min(0, ...profit)
+  const range = maxV - minV || 1
+  const x = (i: number) => (n <= 1 ? padL + plotW / 2 : padL + (i * plotW) / (n - 1))
+  const y = (v: number) => padT + (1 - (v - minV) / range) * plotH
+  const poly = (arr: number[]) => arr.map((v, i) => `${x(i)},${y(v)}`).join(' ')
+  const zeroY = y(0)
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+      <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="#3a3733" strokeWidth="1" />
+      <polyline fill="none" stroke="#d9824f" strokeWidth="2" points={poly(sales)} />
+      <polyline fill="none" stroke="#6bcf8c" strokeWidth="2" points={poly(profit)} />
+      {data.map((d, i) => (
+        <g key={i}>
+          <circle cx={x(i)} cy={y(d.sales)} r="2.5" fill="#d9824f" />
+          <circle cx={x(i)} cy={y(d.profit)} r="2.5" fill="#6bcf8c" />
+          <text x={x(i)} y={H - 8} fontSize="8" textAnchor="middle" fill="#918b81">
+            {d.label}
+          </text>
+        </g>
+      ))}
+    </svg>
+  )
+}
+
+function Row({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-stone-500">{label}</span>
+      <span className={`font-semibold ${accent ? 'text-green-700' : 'text-stone-800'}`}>
+        {value}
+      </span>
     </div>
   )
 }
