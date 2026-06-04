@@ -25,8 +25,9 @@ function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-svh md:flex">
       {/* サイドバー（タブレット・デスクトップ） */}
       <aside className="hidden md:flex md:flex-col md:w-52 lg:w-60 shrink-0 border-r border-stone-200 sticky top-0 h-svh">
-        <div className="px-4 py-4 text-lg font-bold text-amber-800">
+        <div className="px-4 py-4 text-lg font-bold text-amber-800 flex items-baseline gap-2">
           🍛 コバタロカレー
+          <span className="text-xs font-normal text-stone-400">v{__APP_VERSION__}</span>
         </div>
         <nav className="flex-1 px-2 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => (
