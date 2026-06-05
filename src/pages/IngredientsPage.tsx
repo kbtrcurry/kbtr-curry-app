@@ -4,6 +4,7 @@ import { readRange, updateValues, appendRows, AuthExpiredError } from '../lib/sh
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 import { usePersistedState } from '../lib/persistState'
 import { getCached, setCached } from '../lib/dataCache'
+import { useRegisterBack } from '../lib/backHandler'
 
 type FieldKey = 'weight' | 'unitPrice' | 'stock' | 'threshold'
 
@@ -59,6 +60,12 @@ export default function IngredientsPage() {
   const [adding, setAdding] = useState(false)
   const [newIng, setNewIng] = useState({ name: '', category: '', unit: 'g', supplier: '' })
   const [addBusy, setAddBusy] = useState(false)
+
+  // スワイプ戻し：新規追加フォームを閉じる
+  useRegisterBack(() => {
+    if (adding) { setAdding(false); return true }
+    return false
+  })
 
   const handleAuthError = useCallback(
     (e: unknown) => {
