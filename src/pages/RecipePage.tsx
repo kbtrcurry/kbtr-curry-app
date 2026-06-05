@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
-import { readRange, updateValues, appendRows, AuthExpiredError } from '../lib/sheets'
+import { readRange, updateValues, appendRows, deleteRow as deleteSheetRow, getSheetId, AuthExpiredError } from '../lib/sheets'
 import {
   loadRecipes,
   SALE_COL,
@@ -58,6 +58,9 @@ export default function RecipePage() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameVal, setRenameVal] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   const handleAuthError = useCallback(
     (e: unknown) => {
@@ -276,6 +279,53 @@ export default function RecipePage() {
       await load()
     } catch (e) {
       handleAuthError(e)
+    }
+  }
+
+  // レシピ名変更
+  const renameRecipe = async () => {
+    if (!token || !selected) return
+    const nm = renameVal.trim()
+    if (!nm || nm === selected) { setRenaming(false); return }
+    if (names.includes(nm)) { setError('同名のレシピが既にあります'); return }
+    const row = rowMap[selected]
+    if (!row) return
+    setError(null)
+    try {
+      await updateValues(token, `レシピ一覧!A${row}`, [[nm]])
+      clearCache('recipe_data')
+      await load()
+      setSelected(nm)
+      setRenaming(false)
+    } catch (e) {
+      handleAuthError(e)
+    }
+  }
+
+  // レシピ削除（レシピ一覧から行削除 + 食材明細をブランク）
+  const deleteRecipe = async () => {
+    if (!token || !selected) return
+    if (!confirm(`「${selected}」を削除しますか？\n食材明細も削除されます。元に戻せません。`)) return
+    const row = rowMap[selected]
+    if (!row) return
+    setDeleting(true)
+    setError(null)
+    try {
+      // 食材明細の該当行をブランク
+      const items = recipeMap[selected] ?? []
+      for (const it of items) {
+        await updateValues(token, `レシピ食材明細!B${it.row}:D${it.row}`, [['', '', '']])
+      }
+      // レシピ一覧の行を削除
+      const sheetId = await getSheetId(token, 'レシピ一覧')
+      await deleteSheetRow(token, sheetId, row - 1)
+      clearCache('recipe_data')
+      setSelected(null)
+      await load()
+    } catch (e) {
+      handleAuthError(e)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -532,23 +582,54 @@ export default function RecipePage() {
       {/* レシピ詳細 */}
       {selected && (
         <>
-          <button onClick={() => setSelected(null)} className="text-stone-500 text-sm mb-3">
-            ← レシピ一覧へ
-          </button>
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <h2 className="text-lg font-bold text-stone-900 min-w-0 truncate">{selected}</h2>
-            <select
-              value={typeMap[selected] ?? 'その他'}
-              onChange={(e) => saveType(e.target.value)}
-              className="shrink-0 border border-stone-300 rounded-lg px-2 py-1 text-sm text-amber-700 bg-white"
-            >
-              {RECIPE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+          <div className="flex items-center justify-between mb-3">
+            <button onClick={() => setSelected(null)} className="text-stone-500 text-sm">
+              ← 一覧へ
+            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setRenaming(true); setRenameVal(selected) }}
+                className="text-xs border border-stone-300 rounded-lg px-2 py-1 text-stone-600"
+              >
+                ✏️ 名前変更
+              </button>
+              <button
+                onClick={deleteRecipe}
+                disabled={deleting}
+                className="text-xs border border-red-200 rounded-lg px-2 py-1 text-red-500 disabled:opacity-40"
+              >
+                🗑️ 削除
+              </button>
+            </div>
           </div>
+
+          {renaming ? (
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                autoFocus
+                value={renameVal}
+                onChange={(e) => setRenameVal(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') renameRecipe(); if (e.key === 'Escape') setRenaming(false) }}
+                className="flex-1 border border-amber-400 rounded-lg px-3 py-2 text-base font-semibold"
+              />
+              <button onClick={renameRecipe} className="bg-amber-700 text-[#faf9f5] px-3 rounded-lg font-semibold text-sm">保存</button>
+              <button onClick={() => setRenaming(false)} className="border border-stone-300 px-3 rounded-lg text-stone-600 text-sm">×</button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h2 className="text-lg font-bold text-stone-900 min-w-0 truncate">{selected}</h2>
+              <select
+                value={typeMap[selected] ?? 'その他'}
+                onChange={(e) => saveType(e.target.value)}
+                className="shrink-0 border border-stone-300 rounded-lg px-2 py-1 text-sm text-amber-700 bg-white"
+              >
+                {RECIPE_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="space-y-2 mb-3">
             {rows.map((r) => (

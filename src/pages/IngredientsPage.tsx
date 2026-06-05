@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../lib/auth'
-import { readRange, updateValues, AuthExpiredError } from '../lib/sheets'
+import { readRange, updateValues, appendRows, AuthExpiredError } from '../lib/sheets'
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 import { usePersistedState } from '../lib/persistState'
 import { getCached, setCached } from '../lib/dataCache'
@@ -56,6 +56,9 @@ export default function IngredientsPage() {
   const [edits, setEdits] = useState<Record<number, Partial<Record<FieldKey, string>>>>({})
   const [savingRow, setSavingRow] = useState<number | null>(null)
   const [savedRow, setSavedRow] = useState<number | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [newIng, setNewIng] = useState({ name: '', category: '', unit: 'g', supplier: '' })
+  const [addBusy, setAddBusy] = useState(false)
 
   const handleAuthError = useCallback(
     (e: unknown) => {
@@ -158,6 +161,31 @@ export default function IngredientsPage() {
     }
   }
 
+  const addIngredient = async () => {
+    if (!token) return
+    const name = newIng.name.trim()
+    if (!name) return
+    if (list.some((x) => x.name === name)) {
+      setError('同名の食材が既にあります')
+      return
+    }
+    setAddBusy(true)
+    setError(null)
+    try {
+      await appendRows(token, '食材マスタ!A:E', [
+        [name, newIng.category.trim(), newIng.unit.trim() || 'g', '', newIng.supplier.trim()],
+      ])
+      setAdding(false)
+      setNewIng({ name: '', category: '', unit: 'g', supplier: '' })
+      setCached('ing_list', null as unknown as Ingredient[])
+      await load()
+    } catch (e) {
+      handleAuthError(e)
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
   const isAlert = (x: Ingredient) =>
     x.stock !== null && x.threshold !== null && x.stock < x.threshold
 
@@ -247,13 +275,73 @@ export default function IngredientsPage() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold text-amber-800">🥬 食材マスタ</h1>
-        <button onClick={() => load()} className="text-sm text-stone-500 underline">
-          ↻ 更新
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setAdding((v) => !v); setNewIng({ name: '', category: '', unit: 'g', supplier: '' }) }}
+            className="text-sm bg-amber-700 text-[#faf9f5] px-3 py-1 rounded-lg font-semibold"
+          >
+            ＋新規
+          </button>
+          <button onClick={() => load()} className="text-sm text-stone-500 border border-stone-200 rounded-lg px-2 py-1">
+            ↻
+          </button>
+        </div>
       </div>
       <p className="text-xs text-stone-500 mb-3">
         単価・単品価格は<span className="font-semibold">税抜き</span>で入力
       </p>
+
+      {adding && (
+        <div className="border border-amber-200 bg-amber-50/50 rounded-xl p-3 mb-4 space-y-2">
+          <p className="text-sm font-semibold text-stone-700">新しい食材を追加</p>
+          <input
+            type="text"
+            autoFocus
+            value={newIng.name}
+            onChange={(e) => setNewIng((p) => ({ ...p, name: e.target.value }))}
+            placeholder="食材名（必須）"
+            className="w-full border border-stone-300 rounded-lg px-3 py-2 text-base"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="text"
+              value={newIng.category}
+              onChange={(e) => setNewIng((p) => ({ ...p, category: e.target.value }))}
+              placeholder="分類（例：スパイス）"
+              className="border border-stone-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <input
+              type="text"
+              value={newIng.unit}
+              onChange={(e) => setNewIng((p) => ({ ...p, unit: e.target.value }))}
+              placeholder="単位（例：g）"
+              className="border border-stone-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <input
+            type="text"
+            value={newIng.supplier}
+            onChange={(e) => setNewIng((p) => ({ ...p, supplier: e.target.value }))}
+            placeholder="仕入先（任意）"
+            className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => setAdding(false)}
+              className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold text-sm"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={addIngredient}
+              disabled={addBusy || !newIng.name.trim()}
+              className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold text-sm disabled:opacity-40"
+            >
+              {addBusy ? '追加中...' : '追加'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <input
         type="text"
