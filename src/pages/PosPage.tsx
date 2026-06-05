@@ -25,7 +25,7 @@ const DISABLED_FLAGS = ['off', 'false', '無効', 'no', '0']
 const QUICK_AMOUNTS = [1000, 5000, 10000]
 const MANUAL_LABEL = '金額入力'
 // 取り置きのサービス品（無料）。このレシピの一食原価 × 件数 をその他経費に加算する
-const TORIOKI_RECIPE = 'うずらのアチャール'
+const TORIOKI_RECIPE = 'うずらのアチャール(50～55個版)'
 
 function todayStr(): string {
   const d = new Date()
@@ -289,14 +289,15 @@ export default function PosPage() {
       }
       foodCost = Math.round(foodCost)
       serviceCost = Math.round(serviceCost)
-      const other = misc + serviceCost // その他経費 = 手入力分 ＋ 取り置きサービス分
+      const other = misc // その他経費（手入力分のみ）
+      const totalDeduct = foodCost + fee + other + serviceCost
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
       const note = `${memo}${memo ? ' ' : ''}(${sales.length}組${
         toriokiN > 0 ? ` うずら${toriokiN}食` : ''
       })`
 
-      await appendRows(token, '営業サマリー!A:H', [
-        [date, dayTotal, foodCost, fee, dayTotal - foodCost - fee - other, rate, note, other],
+      await appendRows(token, '営業サマリー!A:I', [
+        [date, dayTotal, foodCost, fee, dayTotal - totalDeduct, rate, note, other, serviceCost],
       ])
       // 組数と仕入れ実費をlocalStorageに保存（分析用）
       patchEventData(date, { groups: sales.length })

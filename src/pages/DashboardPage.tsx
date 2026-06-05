@@ -22,6 +22,7 @@ type Summary = {
   foodCost: number
   locationFee: number
   otherCost: number
+  uzuraCost: number
   profit: number
   memo: string
 }
@@ -89,7 +90,7 @@ export default function DashboardPage() {
     setError(null)
     try {
       const [sum, rec] = await Promise.all([
-        readRange(token, '営業サマリー!A2:H'),
+        readRange(token, '営業サマリー!A2:I'),
         readRange(token, '営業記録!A2:E'),
       ])
       const newSummaries = sum
@@ -104,6 +105,7 @@ export default function DashboardPage() {
           profit: Number(r[4]) || 0,
           memo: (r[6] ?? '').trim(),
           otherCost: Number(r[7]) || 0,
+          uzuraCost: Number(r[8]) || 0,
         }))
       const newRecords = rec
         .filter((r) => (r[0] ?? '').trim() && (r[1] ?? '').trim())
@@ -160,12 +162,12 @@ export default function DashboardPage() {
       const rate = sales > 0 ? Math.round((foodCost / sales) * 1000) / 10 : 0
       if (s) {
         const row = s.idx + 2 // A2 が先頭データ行
-        await updateValues(token, `営業サマリー!A${row}:H${row}`, [
-          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other],
+        await updateValues(token, `営業サマリー!A${row}:I${row}`, [
+          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, s.uzuraCost],
         ])
       } else {
-        await appendRows(token, '営業サマリー!A:H', [
-          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other],
+        await appendRows(token, '営業サマリー!A:I', [
+          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, 0],
         ])
       }
       setEditId(null)
@@ -568,6 +570,9 @@ export default function DashboardPage() {
                             <Row label="場所代" value={yen(s.locationFee)} />
                             {s.otherCost > 0 && (
                               <Row label="その他経費" value={yen(s.otherCost)} />
+                            )}
+                            {s.uzuraCost > 0 && (
+                              <Row label="うずら原価" value={yen(s.uzuraCost)} />
                             )}
                             <Row label="利益" value={yen(s.profit)} accent />
                             <Row
