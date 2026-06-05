@@ -16,6 +16,34 @@ import { useRegisterBack } from '../lib/backHandler'
 import { getCached, setCached, clearCache } from '../lib/dataCache'
 import { getEventData } from '../lib/eventData'
 import { useKeyboardOffset } from '../lib/useKeyboardOffset'
+import { perServingCost, type CostCtx } from '../lib/cost'
+import type { DetailItem } from '../lib/recipes'
+
+const TORIOKI_RECIPE_KEY = 'kbtr_torioki_recipe'
+
+// PosPage と同じ recipe_data キャッシュの形（必要分のみ）
+type RecipeDataCache = {
+  priceMap: Record<string, number>
+  recipeMap: Record<string, DetailItem[]>
+  yieldMap: Record<string, number | null>
+  swMap: Record<string, number | null>
+  servingsMap: Record<string, number | null>
+  names: string[]
+}
+function getRecipeCtx(): { ctx: CostCtx | null; names: string[] } {
+  const c = getCached<RecipeDataCache>('recipe_data')
+  if (!c) return { ctx: null, names: [] }
+  return {
+    ctx: {
+      recipeMap: c.recipeMap,
+      priceMap: c.priceMap,
+      yieldMap: c.yieldMap,
+      servingWeightMap: c.swMap,
+      servingsMap: c.servingsMap,
+    },
+    names: c.names ?? [],
+  }
+}
 
 type Summary = {
   idx: number
@@ -65,17 +93,25 @@ export default function DashboardPage() {
     locationFee: '',
     otherCost: '',
     memo: '',
+    toriokiN: '',
+    toriokiRecipe: '',
   })
+  const [recipeNames, setRecipeNames] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [confirmTarget, setConfirmTarget] = useState<Summary | null>(null)
+
+  // メニュー別（営業記録）の編集
+  const [menuEditId, setMenuEditId] = useState<string | null>(null)
+  const [menuEdit, setMenuEdit] = useState<{ menu: string; qty: string; price: number }[]>([])
 
   const [dashTab, setDashTab] = usePersistedState<DashTab>('kbtr_view_dash_tab', 'summary')
   const [period, setPeriod] = usePersistedState<Period>('kbtr_view_dash_period', 'all')
   const [targetInput, setTargetInput] = useState('')
   useKeyboardOffset()
 
-  // スワイプ戻し：編集→詳細、詳細→閉じる
+  // スワイプ戻し：メニュー編集→詳細、編集→詳細、詳細→閉じる
   useRegisterBack(() => {
+    if (menuEditId) { setMenuEditId(null); return true }
     if (editId) { setEditId(null); return true }
     if (openId) { setOpenId(null); return true }
     return false
@@ -153,7 +189,26 @@ export default function DashboardPage() {
     load(hasCached)
   }, [load])
 
+  // 取り置き原価（人数×1食原価）を計算
+  const calcUzuraCost = (countStr: string, recipe: string): number => {
+    const count = Number(countStr) || 0
+    if (count <= 0 || !recipe) return 0
+    const { ctx } = getRecipeCtx()
+    if (!ctx) return 0
+    return Math.round(count * perServingCost(recipe, ctx))
+  }
+
   const startEdit = (s: Summary, sid: string) => {
+    const { names } = getRecipeCtx()
+    setRecipeNames(names)
+    // 既存のうずら原価から人数を逆算（レシピは前回保存値を既定に）
+    const savedRecipe = localStorage.getItem(TORIOKI_RECIPE_KEY) ?? ''
+    let countGuess = ''
+    if (s.uzuraCost > 0 && savedRecipe) {
+      const { ctx } = getRecipeCtx()
+      const per = ctx ? perServingCost(savedRecipe, ctx) : 0
+      if (per > 0) countGuess = String(Math.round(s.uzuraCost / per))
+    }
     setEditId(sid)
     setEdit({
       date: s.date,
@@ -162,12 +217,19 @@ export default function DashboardPage() {
       locationFee: String(s.locationFee),
       otherCost: String(s.otherCost),
       memo: s.memo,
+      toriokiN: countGuess,
+      toriokiRecipe: s.uzuraCost > 0 ? savedRecipe : '',
     })
   }
 
   const startNew = () => {
+    const { names } = getRecipeCtx()
+    setRecipeNames(names)
     setEditId('new')
-    setEdit({ date: todayStr(), sales: '', foodCost: '', locationFee: '5000', otherCost: '', memo: '' })
+    setEdit({
+      date: todayStr(), sales: '', foodCost: '', locationFee: '5000',
+      otherCost: '', memo: '', toriokiN: '', toriokiRecipe: '',
+    })
   }
 
   const saveEdit = async (s?: Summary) => {
@@ -179,21 +241,64 @@ export default function DashboardPage() {
       const foodCost = Number(edit.foodCost) || 0
       const fee = Number(edit.locationFee) || 0
       const other = Number(edit.otherCost) || 0
-      const profit = sales - foodCost - fee - other
+      const uzura = calcUzuraCost(edit.toriokiN, edit.toriokiRecipe)
+      const profit = sales - foodCost - fee - other - uzura
       const rate = sales > 0 ? Math.round((foodCost / sales) * 1000) / 10 : 0
       if (s) {
         const row = s.idx + 2 // A2 が先頭データ行
         await updateValues(token, `営業サマリー!A${row}:I${row}`, [
-          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, s.uzuraCost],
+          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, uzura],
         ])
       } else {
         await appendRows(token, '営業サマリー!A:I', [
-          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, 0],
+          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, uzura],
         ])
       }
       setEditId(null)
       clearCache('dash_summaries')
       clearCache('dash_records')
+      await load()
+    } catch (e) {
+      handleAuthError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // メニュー別（営業記録）の編集を開始
+  const startMenuEdit = (date: string, sid: string) => {
+    const rows = Object.entries(recByDate[date] ?? {})
+      .sort((a, b) => b[1].amount - a[1].amount)
+      .map(([menu, v]) => ({
+        menu,
+        qty: String(v.qty),
+        price: v.qty > 0 ? Math.round(v.amount / v.qty) : 0,
+      }))
+    setMenuEdit(rows)
+    setMenuEditId(sid)
+  }
+
+  // メニュー別の数を保存（当日分を入れ替え）
+  const saveMenuEdit = async (date: string) => {
+    if (!token) return
+    setBusy(true)
+    setError(null)
+    try {
+      const existing = await readRange(token, '営業記録!A2:E')
+      const delRows = existing
+        .map((r, i) => ({ d: (r[0] ?? '').trim(), rowIdx: i + 1 }))
+        .filter((x) => x.d === date)
+        .map((x) => x.rowIdx)
+      const sheetId = await getSheetId(token, '営業記録')
+      if (delRows.length) await deleteRows(token, sheetId, delRows)
+      const rows = menuEdit
+        .map((m) => ({ menu: m.menu.trim(), qty: Number(m.qty) || 0, price: m.price }))
+        .filter((m) => m.menu && m.qty > 0)
+        .map((m) => [date, m.menu, m.qty, m.price, m.qty * m.price])
+      if (rows.length) await appendRows(token, '営業記録!A:E', rows)
+      setMenuEditId(null)
+      clearCache('dash_records')
+      clearCache('dash_summaries')
       await load()
     } catch (e) {
       handleAuthError(e)
@@ -481,6 +586,18 @@ export default function DashboardPage() {
                       <EditField label="場所代" value={edit.locationFee} onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))} />
                       <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
                     </div>
+                    <ToriokiEditFields
+                      countStr={edit.toriokiN}
+                      recipe={edit.toriokiRecipe}
+                      names={recipeNames}
+                      onCount={(v) => setEdit((e) => ({ ...e, toriokiN: v }))}
+                      onRecipe={(v) => setEdit((e) => ({ ...e, toriokiRecipe: v }))}
+                    />
+                    {calcUzuraCost(edit.toriokiN, edit.toriokiRecipe) > 0 && (
+                      <p className="text-xs text-stone-500">
+                        取り置き原価 −{yen(calcUzuraCost(edit.toriokiN, edit.toriokiRecipe))}（利益から差引）
+                      </p>
+                    )}
                     <div>
                       <label className="block text-xs text-stone-500 mb-1">メモ</label>
                       <input
@@ -564,6 +681,13 @@ export default function DashboardPage() {
                               onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))}
                             />
                           </div>
+                          <ToriokiEditFields
+                            countStr={edit.toriokiN}
+                            recipe={edit.toriokiRecipe}
+                            names={recipeNames}
+                            onCount={(v) => setEdit((e) => ({ ...e, toriokiN: v }))}
+                            onRecipe={(v) => setEdit((e) => ({ ...e, toriokiRecipe: v }))}
+                          />
                           <div>
                             <label className="block text-xs text-stone-500 mb-1">メモ</label>
                             <input
@@ -576,7 +700,9 @@ export default function DashboardPage() {
                             />
                           </div>
                           <p className="text-xs text-stone-400">
-                            利益 = 売上 − 食材原価 − 場所代 − その他経費（自動計算）
+                            利益 = 売上 − 食材原価 − 場所代 − その他経費 − 取り置き原価
+                            {calcUzuraCost(edit.toriokiN, edit.toriokiRecipe) > 0 &&
+                              `（取り置き −${yen(calcUzuraCost(edit.toriokiN, edit.toriokiRecipe))}）`}
                           </p>
                           <div className="flex gap-2 pt-1">
                             <button
@@ -607,7 +733,7 @@ export default function DashboardPage() {
                               <Row label="その他経費" value={yen(s.otherCost)} />
                             )}
                             {s.uzuraCost > 0 && (
-                              <Row label="うずら原価" value={yen(s.uzuraCost)} />
+                              <Row label="取り置き原価" value={yen(s.uzuraCost)} />
                             )}
                             <Row label="利益" value={yen(s.profit)} accent />
                             <Row
@@ -638,23 +764,82 @@ export default function DashboardPage() {
                           {s.memo && (
                             <p className="text-stone-500 mb-2">メモ: {s.memo}</p>
                           )}
-                          {menus.length > 0 && (
-                            <div className="bg-stone-50 rounded-lg p-2 mb-2">
-                              <p className="text-xs text-stone-400 mb-1">メニュー別</p>
-                              {menus.map(([mn, v]) => (
-                                <div
-                                  key={mn}
-                                  className="flex justify-between py-0.5 text-stone-700"
-                                >
-                                  <span className="truncate">
-                                    {mn} <span className="text-stone-400">×{v.qty}</span>
-                                  </span>
-                                  <span className="font-medium text-stone-800 shrink-0 ml-2">
-                                    {yen(v.amount)}
-                                  </span>
+                          {menuEditId === sid ? (
+                            <div className="bg-stone-50 rounded-lg p-2 mb-2 space-y-1.5">
+                              <p className="text-xs text-stone-400">メニュー別の数を編集</p>
+                              {menuEdit.map((m, i) => (
+                                <div key={i} className="flex items-center gap-2">
+                                  <span className="flex-1 truncate text-stone-700">{m.menu}</span>
+                                  <input
+                                    type="number"
+                                    inputMode="numeric"
+                                    value={m.qty}
+                                    onChange={(e) =>
+                                      setMenuEdit((arr) =>
+                                        arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)),
+                                      )
+                                    }
+                                    className="w-16 border border-stone-300 rounded-lg px-2 py-1 text-right bg-white"
+                                  />
+                                  <span className="text-xs text-stone-400">食</span>
+                                  <button
+                                    onClick={() =>
+                                      setMenuEdit((arr) => arr.filter((_, j) => j !== i))
+                                    }
+                                    className="text-red-400 px-1"
+                                    title="削除"
+                                  >
+                                    🗑️
+                                  </button>
                                 </div>
                               ))}
+                              {menuEdit.length === 0 && (
+                                <p className="text-xs text-stone-400 py-1">記録がありません</p>
+                              )}
+                              <div className="flex gap-2 pt-1">
+                                <button
+                                  onClick={() => setMenuEditId(null)}
+                                  disabled={busy}
+                                  className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold text-sm"
+                                >
+                                  キャンセル
+                                </button>
+                                <button
+                                  onClick={() => saveMenuEdit(s.date)}
+                                  disabled={busy}
+                                  className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50 text-sm"
+                                >
+                                  {busy ? '保存中...' : '保存'}
+                                </button>
+                              </div>
                             </div>
+                          ) : (
+                            menus.length > 0 && (
+                              <div className="bg-stone-50 rounded-lg p-2 mb-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-xs text-stone-400">メニュー別</p>
+                                  <button
+                                    onClick={() => startMenuEdit(s.date, sid)}
+                                    className="text-xs text-amber-700 font-semibold active:opacity-70"
+                                  >
+                                    ✏️ 数を編集
+                                  </button>
+                                </div>
+                                {menus.map(([mn, v]) => (
+                                  <div
+                                    key={mn}
+                                    className="flex justify-between py-0.5 text-stone-700"
+                                  >
+                                    <span className="truncate">
+                                      {mn} <span className="text-stone-400">×{v.qty}</span>
+                                    </span>
+                                    <span className="font-medium text-stone-800 shrink-0 ml-2">
+                                      {yen(v.amount)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )
                           )}
                           <div className="flex gap-2">
                             <button
@@ -918,6 +1103,51 @@ function LineChart({
         </g>
       ))}
     </svg>
+  )
+}
+
+function ToriokiEditFields({
+  countStr,
+  recipe,
+  names,
+  onCount,
+  onRecipe,
+}: {
+  countStr: string
+  recipe: string
+  names: string[]
+  onCount: (v: string) => void
+  onRecipe: (v: string) => void
+}) {
+  return (
+    <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-2 space-y-2">
+      <p className="text-xs font-semibold text-stone-600">取り置き特典</p>
+      <div>
+        <label className="block text-xs text-stone-500 mb-1">対象レシピ</label>
+        <select
+          value={recipe}
+          onChange={(e) => onRecipe(e.target.value)}
+          className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white"
+        >
+          <option value="">（なし）</option>
+          {names.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs text-stone-500 mb-1">取り置き人数（人）</label>
+        <input
+          type="number"
+          inputMode="numeric"
+          value={countStr}
+          onChange={(e) => onCount(e.target.value)}
+          className="w-full border border-stone-300 rounded-lg px-3 py-2 text-right"
+        />
+      </div>
+    </div>
   )
 }
 
