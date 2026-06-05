@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../lib/auth'
 import { Spinner } from '../components/Spinner'
 import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
-import { loadRecipes } from '../lib/recipes'
+import { loadRecipes, type DetailItem } from '../lib/recipes'
 import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
 import { usePersistedState } from '../lib/persistState'
 import { getCached, setCached } from '../lib/dataCache'
@@ -20,6 +20,25 @@ type Receipt = {
   total: number
   received: number
   change: number
+}
+
+// RecipePage と同じ recipe_data キャッシュの形（必要な分だけ）
+type RecipeDataCache = {
+  priceMap: Record<string, number>
+  recipeMap: Record<string, DetailItem[]>
+  yieldMap: Record<string, number | null>
+  swMap: Record<string, number | null>
+  servingsMap: Record<string, number | null>
+  names: string[]
+}
+function ctxFromRecipeCache(c: RecipeDataCache): CostCtx {
+  return {
+    recipeMap: c.recipeMap,
+    priceMap: c.priceMap,
+    yieldMap: c.yieldMap,
+    servingWeightMap: c.swMap,
+    servingsMap: c.servingsMap,
+  }
 }
 
 const DISABLED_FLAGS = ['off', 'false', '無効', 'no', '0']
@@ -251,22 +270,34 @@ export default function PosPage() {
   }, [token])
 
   // 締め画面を開く（レシピ一覧と原価コンテキストを取得）
+  const applyCtx = (ctx: CostCtx, names: string[]) => {
+    costCtxRef.current = ctx
+    if (names.length) setRecipeNames(names)
+    const saved = localStorage.getItem(TORIOKI_RECIPE_KEY) ?? ''
+    if (saved && names.includes(saved)) {
+      setAcharCost(Math.round(perServingCost(saved, ctx)))
+    }
+  }
+
   const openClosing = async () => {
     setClosing(true)
-    setAcharLoading(true)
+    // ① まず先読み済みキャッシュ(recipe_data)から即座にレシピ一覧を表示
+    const cached = getCached<RecipeDataCache>('recipe_data')
+    if (cached?.names?.length) {
+      applyCtx(ctxFromRecipeCache(cached), cached.names)
+      setAcharLoading(false)
+    } else {
+      setAcharLoading(true)
+    }
+    // ② 最新を取得して原価を更新（一覧はキャッシュの全件を優先）
     try {
       const ctx = await buildCtx()
-      costCtxRef.current = ctx
-      const names = Object.keys(ctx.recipeMap).sort()
-      setRecipeNames(names)
-      const saved = localStorage.getItem(TORIOKI_RECIPE_KEY) ?? ''
-      if (saved && names.includes(saved)) {
-        setAcharCost(Math.round(perServingCost(saved, ctx)))
-      } else {
-        setAcharCost(null)
-      }
+      const names = cached?.names?.length
+        ? cached.names
+        : Object.keys(ctx.recipeMap).sort()
+      applyCtx(ctx, names)
     } catch {
-      setAcharCost(null)
+      /* キャッシュがあればそれを維持。無ければ空のまま */
     } finally {
       setAcharLoading(false)
     }
@@ -800,18 +831,15 @@ export default function PosPage() {
                     className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
                   />
                 </div>
-                <div className="flex-1 text-sm text-stone-600 pb-1">
+                <div className="flex-1 pb-1">
                   {toriokiRecipe && acharCost !== null ? (
                     <>
-                      ¥{acharCost.toLocaleString()}/食
-                      {toriokiN > 0 && (
-                        <>
-                          {' → '}
-                          <span className="font-bold text-stone-800">
-                            ¥{toriokiCost.toLocaleString()}
-                          </span>
-                        </>
-                      )}
+                      <span className="block text-xs text-stone-500">
+                        取り置き原価（¥{acharCost.toLocaleString()}/食）
+                      </span>
+                      <span className="block text-2xl font-bold text-stone-900 leading-tight">
+                        −¥{toriokiCost.toLocaleString()}
+                      </span>
                     </>
                   ) : toriokiRecipe ? (
                     <span className="text-amber-600 text-xs">原価を取得できませんでした</span>
@@ -821,7 +849,7 @@ export default function PosPage() {
                 </div>
               </div>
               <p className="text-xs text-stone-400">
-                ※ 取り置き原価として売上サマリーに別途記録されます
+                ※ 上記の取り置き原価は利益（売上）から差し引かれます
               </p>
             </div>
 
