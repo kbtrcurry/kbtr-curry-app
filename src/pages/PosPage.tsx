@@ -284,7 +284,7 @@ export default function PosPage() {
       const other = misc + serviceCost // その他経費 = 手入力分 ＋ 取り置きサービス分
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
       const note = `${memo}${memo ? ' ' : ''}(${sales.length}組${
-        toriokiN > 0 ? ` 取り置き${toriokiN}件` : ''
+        toriokiN > 0 ? ` うずら${toriokiN}食` : ''
       })`
 
       await appendRows(token, '営業サマリー!A:H', [
@@ -453,35 +453,6 @@ export default function PosPage() {
           >
             締める
           </button>
-        </div>
-        {/* 仕入れ実費・粗利行 */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-stone-500 shrink-0">仕入れ実費</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={costStr}
-            onChange={(e) => {
-              setCostStr(e.target.value)
-              patchEventData(todayStr(), { cost: Number(e.target.value) || 0 })
-            }}
-            placeholder="0"
-            className="w-24 border border-stone-300 rounded-lg px-2 py-1 text-right text-sm bg-white"
-          />
-          <span className="text-xs text-stone-400">円</span>
-          {Number(costStr) > 0 && (
-            <span className="text-xs text-stone-600 ml-1">
-              粗利{' '}
-              <b className={dayTotal - Number(costStr) >= 0 ? 'text-green-700' : 'text-red-600'}>
-                ¥{(dayTotal - Number(costStr)).toLocaleString()}
-              </b>
-              {dayTotal > 0 && (
-                <span className="text-stone-400 ml-1">
-                  ({Math.round((Number(costStr) / dayTotal) * 100)}%)
-                </span>
-              )}
-            </span>
-          )}
         </div>
       </div>
 
@@ -678,11 +649,36 @@ export default function PosPage() {
               </div>
             </div>
 
-            {/* 取り置きサービス（うずらのアチャール） */}
+            {/* 仕入れ実費 */}
+            <div>
+              <label className="block text-sm text-stone-500 mb-1">仕入れ実費（円）</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={costStr}
+                  onChange={(e) => {
+                    setCostStr(e.target.value)
+                    patchEventData(todayStr(), { cost: Number(e.target.value) || 0 })
+                  }}
+                  placeholder="0"
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
+                />
+                {Number(costStr) > 0 && (
+                  <span className="text-sm text-stone-500 shrink-0">
+                    粗利 <b className={dayTotal - Number(costStr) >= 0 ? 'text-green-700' : 'text-red-600'}>
+                      ¥{(dayTotal - Number(costStr)).toLocaleString()}
+                    </b>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* うずらの食数（うずらのアチャール原価を経費に加算） */}
             <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-3">
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className="block text-sm text-stone-500 mb-1">取り置き件数</label>
+                  <label className="block text-sm text-stone-500 mb-1">うずらの食数</label>
                   <input
                     type="number"
                     inputMode="numeric"

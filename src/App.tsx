@@ -1,3 +1,4 @@
+// build:20260605-v4
 import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { useRegisterSW } from 'virtual:pwa-register/react'
@@ -43,7 +44,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-stone-200 bg-stone-900">
         <UpdateButton />
         <span className="text-base font-bold text-amber-800">コバタロカレー</span>
-        <span className="text-xs text-stone-400">v{__APP_VERSION__}</span>
+        <span className="text-xs text-stone-400">v{__APP_VERSION__}.{__BUILD_DATE__}</span>
         <Link to="/menu" className="ml-auto text-xl text-stone-400">⚙️</Link>
       </header>
 

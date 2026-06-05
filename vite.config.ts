@@ -9,6 +9,7 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_DATE__: JSON.stringify('20260605'),
   },
   base: '/kbtr-curry-app/',
   plugins: [

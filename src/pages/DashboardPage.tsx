@@ -5,6 +5,7 @@ import { Spinner } from '../components/Spinner'
 import {
   readRange,
   updateValues,
+  appendRows,
   deleteRow,
   getSheetId,
   AuthExpiredError,
@@ -34,6 +35,10 @@ const thisMonth = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
+const todayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export default function DashboardPage() {
   const { token, login, logout } = useAuth()
@@ -51,6 +56,7 @@ export default function DashboardPage() {
   )
   const [editId, setEditId] = useState<string | null>(null)
   const [edit, setEdit] = useState({
+    date: '',
     sales: '',
     foodCost: '',
     locationFee: '',
@@ -127,6 +133,7 @@ export default function DashboardPage() {
   const startEdit = (s: Summary, sid: string) => {
     setEditId(sid)
     setEdit({
+      date: s.date,
       sales: String(s.sales),
       foodCost: String(s.foodCost),
       locationFee: String(s.locationFee),
@@ -135,7 +142,12 @@ export default function DashboardPage() {
     })
   }
 
-  const saveEdit = async (s: Summary) => {
+  const startNew = () => {
+    setEditId('new')
+    setEdit({ date: todayStr(), sales: '', foodCost: '', locationFee: '5000', otherCost: '', memo: '' })
+  }
+
+  const saveEdit = async (s?: Summary) => {
     if (!token) return
     setBusy(true)
     setError(null)
@@ -146,10 +158,16 @@ export default function DashboardPage() {
       const other = Number(edit.otherCost) || 0
       const profit = sales - foodCost - fee - other
       const rate = sales > 0 ? Math.round((foodCost / sales) * 1000) / 10 : 0
-      const row = s.idx + 2 // A2 が先頭データ行
-      await updateValues(token, `営業サマリー!B${row}:H${row}`, [
-        [sales, foodCost, fee, profit, rate, edit.memo, other],
-      ])
+      if (s) {
+        const row = s.idx + 2 // A2 が先頭データ行
+        await updateValues(token, `営業サマリー!A${row}:H${row}`, [
+          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other],
+        ])
+      } else {
+        await appendRows(token, '営業サマリー!A:H', [
+          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other],
+        ])
+      }
       setEditId(null)
       clearCache('dash_summaries')
       clearCache('dash_records')
@@ -398,9 +416,53 @@ export default function DashboardPage() {
           )}
 
           {/* 営業履歴（各回タップで詳細） */}
-          {sessions.length > 0 && (
-            <Section title="営業履歴（タップで詳細）">
+          {(sessions.length > 0 || true) && (
+            <Section title="営業履歴（タップで詳細）" extra={
+              <button
+                onClick={startNew}
+                className="text-xs bg-amber-700 text-[#faf9f5] px-2.5 py-1 rounded-lg font-semibold active:opacity-80"
+              >
+                ＋ 新規追加
+              </button>
+            }>
               <div className="space-y-2">
+                {editId === 'new' && (
+                  <div className="border border-amber-300 rounded-xl px-3 pb-3 pt-2 text-sm space-y-2 bg-amber-50/40">
+                    <p className="font-semibold text-amber-800 text-xs">新規追加</p>
+                    <div>
+                      <label className="block text-xs text-stone-500 mb-1">日付</label>
+                      <input
+                        type="date"
+                        value={edit.date}
+                        onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
+                        className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <EditField label="売上" value={edit.sales} onChange={(v) => setEdit((e) => ({ ...e, sales: v }))} />
+                      <EditField label="食材原価" value={edit.foodCost} onChange={(v) => setEdit((e) => ({ ...e, foodCost: v }))} />
+                      <EditField label="場所代" value={edit.locationFee} onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))} />
+                      <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-stone-500 mb-1">メモ</label>
+                      <input
+                        type="text"
+                        value={edit.memo}
+                        onChange={(e) => setEdit((p) => ({ ...p, memo: e.target.value }))}
+                        className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+                      />
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => setEditId(null)} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold">
+                        キャンセル
+                      </button>
+                      <button onClick={() => saveEdit()} disabled={busy || !edit.date} className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50">
+                        {busy ? '保存中...' : '追加'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {sessions.map((s) => {
                   const sid = `${s.date}#${s.idx}`
                   const open = openId === sid
@@ -434,6 +496,15 @@ export default function DashboardPage() {
 
                       {open && editId === sid && (
                         <div className="px-3 pb-3 pt-2 border-t border-stone-100 text-sm space-y-2">
+                          <div>
+                            <label className="block text-xs text-stone-500 mb-1">日付</label>
+                            <input
+                              type="date"
+                              value={edit.date}
+                              onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
+                              className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                            />
+                          </div>
                           <div className="grid grid-cols-2 gap-2">
                             <EditField
                               label="売上"
@@ -844,10 +915,13 @@ function Row({ label, value, accent }: { label: string; value: string; accent?: 
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, extra }: { title: string; children: React.ReactNode; extra?: React.ReactNode }) {
   return (
     <div className="mb-5">
-      <h2 className="text-sm font-bold text-stone-700 mb-2">{title}</h2>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-bold text-stone-700">{title}</h2>
+        {extra}
+      </div>
       {children}
     </div>
   )
