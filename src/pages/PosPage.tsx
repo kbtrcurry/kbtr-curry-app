@@ -87,6 +87,7 @@ export default function PosPage() {
     }
   })
 
+  const [showHistory, setShowHistory] = useState(false)
   const [closing, setClosing] = useState(false)
   const [closeError, setCloseError] = useState<string | null>(null)
   const [locationFee, setLocationFee] = useState('5000')
@@ -336,7 +337,7 @@ export default function PosPage() {
   // ── 預り金入力（電卓） ──
   if (step === 'pay') {
     return (
-      <div className="p-4 max-w-md mx-auto pb-32">
+      <div className="p-4 max-w-md mx-auto pb-48">
         <button onClick={() => setStep('select')} className="text-stone-500 self-start mb-3">
           ← 戻る
         </button>
@@ -451,10 +452,16 @@ export default function PosPage() {
       <div className="bg-stone-50 rounded-lg px-3 py-2 mb-4 space-y-2">
         {/* 売上サマリー行 */}
         <div className="flex items-center justify-between">
-          <span className="text-stone-500">
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className="text-stone-500 flex items-center gap-1"
+          >
             本日 <span className="font-bold text-stone-800">{sales.length}</span> 組 / 売上{' '}
             <span className="font-bold text-stone-800">¥{dayTotal.toLocaleString()}</span>
-          </span>
+            {sales.length > 0 && (
+              <span className="text-xs text-stone-400 ml-1">{showHistory ? '▲' : '▼'}</span>
+            )}
+          </button>
           <button
             onClick={openClosing}
             disabled={sales.length === 0}
@@ -463,6 +470,31 @@ export default function PosPage() {
             締める
           </button>
         </div>
+        {/* 会計履歴 */}
+        {showHistory && sales.length > 0 && (
+          <div className="border-t border-stone-200 pt-2 space-y-2">
+            {sales.map((r) => (
+              <div key={r.id} className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs text-stone-400 mr-2">{r.time}</span>
+                  <span className="text-sm text-stone-700">
+                    {r.items.map((it) => `${it.name}×${it.qty}`).join('、')}
+                  </span>
+                  <span className="ml-2 font-semibold text-stone-800">
+                    ¥{r.total.toLocaleString()}
+                  </span>
+                </div>
+                <button
+                  onClick={() => persistSales(sales.filter((x) => x.id !== r.id))}
+                  className="text-red-400 text-lg leading-none shrink-0 active:text-red-600"
+                  title="削除"
+                >
+                  🗑️
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {done && (
@@ -717,7 +749,7 @@ export default function PosPage() {
                 </div>
               </div>
               <p className="text-xs text-stone-400 mt-1">
-                ※ サービス分はその他経費に自動加算されます
+                ※ うずら原価として売上サマリーに別途記録されます
               </p>
             </div>
 
