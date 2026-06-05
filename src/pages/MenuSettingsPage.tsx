@@ -52,12 +52,20 @@ export default function MenuSettingsPage() {
       const [rows, rd, master] = await Promise.all([
         readRange(token, 'メニュー構成!A2:D'),
         loadRecipes(token),
-        readRange(token, '食材マスタ!A2:D'),
+        readRange(token, '食材マスタ!A2:I'),
       ])
       const prices: Record<string, number> = {}
       for (const r of master) {
         const nm = (r[0] ?? '').trim()
-        if (nm) prices[nm] = Number(r[3]) || 0
+        if (!nm) continue
+        const pricePerG = Number(r[3]) || 0
+        if (pricePerG > 0) {
+          prices[nm] = pricePerG
+        } else {
+          const weight = Number(r[6]) || 0
+          const unitPrice = Number(r[8]) || 0
+          prices[nm] = weight > 0 && unitPrice > 0 ? unitPrice / weight : 0
+        }
       }
       const parsed: Menu[] = rows
         .map((r, i) => ({

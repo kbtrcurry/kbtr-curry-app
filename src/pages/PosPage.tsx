@@ -206,12 +206,20 @@ export default function PosPage() {
     if (!token) throw new Error('未ログイン')
     const [rd, master] = await Promise.all([
       loadRecipes(token),
-      readRange(token, '食材マスタ!A2:D'),
+      readRange(token, '食材マスタ!A2:I'),
     ])
     const priceMap: Record<string, number> = {}
     for (const r of master) {
       const nm = (r[0] ?? '').trim()
-      if (nm) priceMap[nm] = Number(r[3]) || 0
+      if (!nm) continue
+      const pricePerG = Number(r[3]) || 0
+      if (pricePerG > 0) {
+        priceMap[nm] = pricePerG
+      } else {
+        const weight = Number(r[6]) || 0
+        const unitPrice = Number(r[8]) || 0
+        priceMap[nm] = weight > 0 && unitPrice > 0 ? unitPrice / weight : 0
+      }
     }
     return {
       recipeMap: rd.recipeMap,
