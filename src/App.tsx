@@ -71,7 +71,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* モバイルヘッダー */}
-      <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-stone-200 bg-stone-900">
+      <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-stone-200 bg-[#191817]">
         <UpdateButton />
         <span className="text-base font-bold text-amber-800">コバタロカレー</span>
         <span className="text-xs text-stone-400">v{__APP_VERSION__}.{__BUILD_DATE__}</span>
