@@ -47,12 +47,19 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  /* ブラウザ標準の左右端スワイプ（履歴の進む/戻る）を抑制 */
+  overscroll-behavior-x: none;
+}
+
 body {
   margin: 0;
   font-family: system-ui, 'Hiragino Sans', 'Yu Gothic', sans-serif;
   -webkit-font-smoothing: antialiased;
   background: #191817; /* ページ背景（パネルより暗い） */
   color: #e0dbd2;
+  overflow-x: hidden; /* スワイプ戻し中のはみ出しを隠す */
 }
 
 #root {

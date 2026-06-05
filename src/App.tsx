@@ -1,8 +1,11 @@
 // build:20260605-v4
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { useRegisterSW } from 'virtual:pwa-register/react'
-import { AuthProvider } from './lib/auth'
+import { AuthProvider, useAuth } from './lib/auth'
+import { SwipeNav } from './components/SwipeNav'
+import { preloadAll } from './lib/preload'
 import PosPage from './pages/PosPage'
 import DashboardPage from './pages/DashboardPage'
 import IngredientsPage from './pages/IngredientsPage'
@@ -35,6 +38,15 @@ function UpdateButton() {
       🍛
     </button>
   )
+}
+
+// ログイン後、全画面ぶんのデータを先読みしてキャッシュを温める
+function Preloader() {
+  const { token } = useAuth()
+  useEffect(() => {
+    if (token) preloadAll(token)
+  }, [token])
+  return null
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
@@ -108,15 +120,18 @@ export default function App() {
     <GoogleOAuthProvider clientId={CLIENT_ID}>
       <AuthProvider>
         <BrowserRouter basename="/kbtr-curry-app">
+          <Preloader />
           <Layout>
-            <Routes>
-              <Route path="/" element={<PosPage />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/ingredients" element={<IngredientsPage />} />
-              <Route path="/recipe" element={<RecipePage />} />
-              <Route path="/prep" element={<PrepPage />} />
-              <Route path="/menu" element={<MenuSettingsPage />} />
-            </Routes>
+            <SwipeNav>
+              <Routes>
+                <Route path="/" element={<PosPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/ingredients" element={<IngredientsPage />} />
+                <Route path="/recipe" element={<RecipePage />} />
+                <Route path="/prep" element={<PrepPage />} />
+                <Route path="/menu" element={<MenuSettingsPage />} />
+              </Routes>
+            </SwipeNav>
           </Layout>
         </BrowserRouter>
       </AuthProvider>

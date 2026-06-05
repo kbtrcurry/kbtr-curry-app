@@ -364,7 +364,7 @@ export default function PosPage() {
   if (step === 'pay') {
     return (
       <div
-        className="flex flex-col max-w-md mx-auto px-4 pt-2"
+        className="flex flex-col mx-auto px-4 pt-2 max-w-md md:max-w-3xl lg:max-w-5xl"
         style={{
           // モバイル下部ナビ(64px)＋セーフエリアを避ける。固定配置は使わない
           minHeight: '100svh',
@@ -372,78 +372,83 @@ export default function PosPage() {
         }}
       >
         <div className="flex items-center justify-between mb-2 shrink-0">
-          <button onClick={() => setStep('select')} className="text-stone-500 py-1">
+          <button onClick={() => setStep('select')} className="text-stone-500 py-1 md:text-lg">
             ← 戻る
           </button>
           <div className="flex items-baseline gap-2">
-            <span className="text-stone-400 text-sm">合計（{cartCount}点）</span>
-            <span className="text-2xl font-bold text-stone-900">
+            <span className="text-stone-400 text-sm md:text-base">合計（{cartCount}点）</span>
+            <span className="text-2xl md:text-4xl font-bold text-stone-900">
               ¥{cartTotal.toLocaleString()}
             </span>
           </div>
         </div>
 
-        {/* 預り金・お釣り表示 */}
-        <div className="rounded-2xl border-2 border-amber-400 p-3 mb-2 shrink-0">
-          <div className="flex items-baseline justify-between">
-            <span className="text-stone-500 text-sm">預り金</span>
-            <span className="text-3xl font-bold text-stone-900">
-              ¥{receivedNum.toLocaleString()}
-            </span>
+        {/* 本体：モバイルは縦1列、iPad（md以上）は左に表示・右にテンキーの2列 */}
+        <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 md:auto-rows-fr md:gap-8 md:items-stretch">
+          {/* 左：預り金・お釣り＋クイック金額 */}
+          <div className="flex flex-col shrink-0 md:shrink md:justify-center md:gap-4">
+            <div className="rounded-2xl border-2 border-amber-400 p-3 md:p-6 mb-2 md:mb-0 shrink-0">
+              <div className="flex items-baseline justify-between">
+                <span className="text-stone-500 text-sm md:text-lg">預り金</span>
+                <span className="text-3xl md:text-6xl font-bold text-stone-900">
+                  ¥{receivedNum.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between mt-1.5 md:mt-4 pt-1.5 md:pt-4 border-t border-stone-200">
+                <span className="text-stone-500 text-sm md:text-lg">お釣り</span>
+                <span
+                  className={`text-2xl md:text-5xl font-bold ${
+                    received === '' ? 'text-stone-300' : change < 0 ? 'text-red-500' : 'text-green-600'
+                  }`}
+                >
+                  {received === ''
+                    ? '—'
+                    : change < 0
+                      ? `不足 ¥${(-change).toLocaleString()}`
+                      : `¥${change.toLocaleString()}`}
+                </span>
+              </div>
+            </div>
+
+            {/* クイック金額 */}
+            <div className="grid grid-cols-4 gap-2 mb-2 md:mb-0 shrink-0">
+              <button
+                onClick={() => setReceived(String(cartTotal))}
+                className="py-2.5 md:py-4 rounded-xl bg-amber-50 text-amber-800 font-bold md:text-lg active:scale-95"
+              >
+                ちょうど
+              </button>
+              {QUICK_AMOUNTS.map((amt) => (
+                <button
+                  key={amt}
+                  onClick={() => setReceived(String(amt))}
+                  className="py-2.5 md:py-4 rounded-xl bg-stone-100 text-stone-800 font-semibold md:text-lg active:scale-95"
+                >
+                  {amt / 1000}千
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="flex items-baseline justify-between mt-1.5 pt-1.5 border-t border-stone-200">
-            <span className="text-stone-500 text-sm">お釣り</span>
-            <span
-              className={`text-2xl font-bold ${
-                received === '' ? 'text-stone-300' : change < 0 ? 'text-red-500' : 'text-green-600'
-              }`}
-            >
-              {received === ''
-                ? '—'
-                : change < 0
-                  ? `不足 ¥${(-change).toLocaleString()}`
-                  : `¥${change.toLocaleString()}`}
-            </span>
+
+          {/* 右：テンキー＋会計操作（残りの高さいっぱいに広がる） */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <Numpad onKey={pressReceived} fill />
+            <div className="flex items-center gap-3 mt-3 shrink-0">
+              <button
+                onClick={() => setReceived('')}
+                className="px-5 py-4 md:py-5 rounded-2xl bg-stone-100 text-stone-500 font-semibold md:text-lg active:scale-95 shrink-0"
+              >
+                クリア
+              </button>
+              <button
+                onClick={() => setStep('change')}
+                disabled={received === '' || change < 0}
+                className="flex-1 bg-amber-700 text-[#faf9f5] py-4 md:py-5 rounded-2xl font-bold text-xl md:text-2xl disabled:opacity-30 active:scale-95 transition-transform"
+              >
+                会計する
+              </button>
+            </div>
           </div>
-        </div>
-
-        {/* クイック金額 */}
-        <div className="grid grid-cols-4 gap-2 mb-2 shrink-0">
-          <button
-            onClick={() => setReceived(String(cartTotal))}
-            className="py-2.5 rounded-xl bg-amber-50 text-amber-800 font-bold active:scale-95"
-          >
-            ちょうど
-          </button>
-          {QUICK_AMOUNTS.map((amt) => (
-            <button
-              key={amt}
-              onClick={() => setReceived(String(amt))}
-              className="py-2.5 rounded-xl bg-stone-100 text-stone-800 font-semibold active:scale-95"
-            >
-              {amt / 1000}千
-            </button>
-          ))}
-        </div>
-
-        {/* テンキー：残りの高さいっぱいに広がる（iPad/iPhoneどちらも下部に寄る） */}
-        <Numpad onKey={pressReceived} fill />
-
-        {/* 会計操作：通常フロー内（固定配置なし） */}
-        <div className="flex items-center gap-3 mt-3 shrink-0">
-          <button
-            onClick={() => setReceived('')}
-            className="px-5 py-4 rounded-2xl bg-stone-100 text-stone-500 font-semibold active:scale-95 shrink-0"
-          >
-            クリア
-          </button>
-          <button
-            onClick={() => setStep('change')}
-            disabled={received === '' || change < 0}
-            className="flex-1 bg-amber-700 text-[#faf9f5] py-4 rounded-2xl font-bold text-xl disabled:opacity-30 active:scale-95 transition-transform"
-          >
-            会計する
-          </button>
         </div>
       </div>
     )
