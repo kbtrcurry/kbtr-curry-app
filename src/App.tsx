@@ -5,6 +5,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { AuthProvider, useAuth } from './lib/auth'
 import { SwipeNav } from './components/SwipeNav'
+import { BackHandlerProvider } from './lib/backHandler'
 import { preloadAll } from './lib/preload'
 import PosPage from './pages/PosPage'
 import DashboardPage from './pages/DashboardPage'
@@ -121,6 +122,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter basename="/kbtr-curry-app">
           <Preloader />
+          <BackHandlerProvider>
           <Layout>
             <SwipeNav>
               <Routes>
@@ -133,6 +135,7 @@ export default function App() {
               </Routes>
             </SwipeNav>
           </Layout>
+          </BackHandlerProvider>
         </BrowserRouter>
       </AuthProvider>
     </GoogleOAuthProvider>

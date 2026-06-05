@@ -1,5 +1,5 @@
-import { useRef, useState, useEffect, type ReactNode } from 'react'
-import { useNavigate, useLocation, useNavigationType } from 'react-router-dom'
+import { useRef, useState, type ReactNode } from 'react'
+import { useBackHandlerRef } from '../lib/backHandler'
 
 // 横スクロール可能な祖先がある場合はスワイプ戻しを無効化（テーブル等との競合回避）
 function hasHScrollAncestor(target: EventTarget | null): boolean {
@@ -15,21 +15,11 @@ function hasHScrollAncestor(target: EventTarget | null): boolean {
 }
 
 /**
- * 左へスワイプすると一つ前の画面へ戻る。指に追従し、離すと滑らかにスライドして戻る。
- * ブラウザ標準の端スワイプ（隣の履歴へ進む/戻る）は touch-action で抑制する。
+ * 左へスワイプすると「同じタブ内で一段階戻る」。タブ間の移動はしない。
+ * 各ページが backHandler を登録しており、戻れたときだけ前の画面が滑らかに入ってくる。
  */
 export function SwipeNav({ children }: { children: ReactNode }) {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const navType = useNavigationType()
-  const depth = useRef(0)
-
-  // 履歴の深さを追跡（戻れるかどうかの判定用）
-  useEffect(() => {
-    if (navType === 'PUSH') depth.current += 1
-    else if (navType === 'POP') depth.current = Math.max(0, depth.current - 1)
-  }, [location.key, navType])
-
+  const backRef = useBackHandlerRef()
   const start = useRef<{ x: number; y: number } | null>(null)
   const horizontal = useRef(false)
   const [dx, setDx] = useState(0)
@@ -62,35 +52,35 @@ export function SwipeNav({ children }: { children: ReactNode }) {
         return
       }
     }
-    // 戻し操作なので左方向のみ追従（右方向は無視）
+    // 戻し操作なので左方向のみ追従
     setDx(Math.min(0, ddx))
   }
 
+  const finishSnapBack = () => {
+    setAnimating(true)
+    setDx(0)
+    window.setTimeout(() => setAnimating(false), 200)
+  }
+
   const onTouchEnd = () => {
-    if (!start.current) {
-      if (dx !== 0) {
-        setAnimating(true)
-        setDx(0)
-        window.setTimeout(() => setAnimating(false), 200)
-      }
+    const released = start.current
+    start.current = null
+    if (!released) {
+      if (dx !== 0) finishSnapBack()
       return
     }
-    start.current = null
-    if (dx < -THRESHOLD && depth.current > 0) {
-      // 画面外まで滑らせてから戻る
-      setAnimating(true)
-      setDx(-window.innerWidth)
-      window.setTimeout(() => {
-        navigate(-1)
-        setAnimating(false)
+    if (dx < -THRESHOLD) {
+      // 一段階戻れるか試す（戻れたら新しい画面が左から入ってくる）
+      const handled = backRef?.current?.() ?? false
+      if (handled) {
+        // 入れ替わった新しい画面を、ドラッグ位置から中央へ滑らかにスライドイン
+        setAnimating(true)
         setDx(0)
-      }, 200)
-    } else {
-      // 閾値未満：元の位置へ滑らかに戻す
-      setAnimating(true)
-      setDx(0)
-      window.setTimeout(() => setAnimating(false), 200)
+        window.setTimeout(() => setAnimating(false), 220)
+        return
+      }
     }
+    finishSnapBack()
   }
 
   return (
@@ -100,7 +90,7 @@ export function SwipeNav({ children }: { children: ReactNode }) {
       onTouchEnd={onTouchEnd}
       style={{
         transform: dx ? `translateX(${dx}px)` : undefined,
-        transition: animating ? 'transform 0.2s ease-out' : undefined,
+        transition: animating ? 'transform 0.22s ease-out' : undefined,
         touchAction: 'pan-y',
       }}
     >

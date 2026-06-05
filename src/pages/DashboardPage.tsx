@@ -12,6 +12,7 @@ import {
   AuthExpiredError,
 } from '../lib/sheets'
 import { usePersistedState } from '../lib/persistState'
+import { useRegisterBack } from '../lib/backHandler'
 import { getCached, setCached, clearCache } from '../lib/dataCache'
 import { getEventData } from '../lib/eventData'
 import { useKeyboardOffset } from '../lib/useKeyboardOffset'
@@ -72,6 +73,13 @@ export default function DashboardPage() {
   const [period, setPeriod] = usePersistedState<Period>('kbtr_view_dash_period', 'all')
   const [targetInput, setTargetInput] = useState('')
   useKeyboardOffset()
+
+  // スワイプ戻し：編集→詳細、詳細→閉じる
+  useRegisterBack(() => {
+    if (editId) { setEditId(null); return true }
+    if (openId) { setOpenId(null); return true }
+    return false
+  })
 
   const handleAuthError = useCallback(
     (e: unknown) => {

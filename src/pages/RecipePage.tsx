@@ -13,6 +13,7 @@ import {
 import { getRecent, pushRecent, RECENT_KEYS, RECENT_LABEL } from '../lib/recent'
 import { usePersistedState } from '../lib/persistState'
 import { getCached, setCached, clearCache } from '../lib/dataCache'
+import { useRegisterBack } from '../lib/backHandler'
 
 const TAX = 1.08 // 軽減税率8%（食材単価は税抜→原価は税込表示）
 const RECIPE_TYPES = [
@@ -61,6 +62,13 @@ export default function RecipePage() {
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
   const [deleting, setDeleting] = useState(false)
+
+  // スワイプ戻し：詳細→一覧、名前変更→詳細
+  useRegisterBack(() => {
+    if (renaming) { setRenaming(false); return true }
+    if (selected) { setSelected(null); return true }
+    return false
+  })
 
   const handleAuthError = useCallback(
     (e: unknown) => {
