@@ -91,6 +91,28 @@ export async function deleteRow(token: string, sheetId: number, rowIndex: number
   return handle(res)
 }
 
+/** 複数行をまとめて削除する（0始まり行インデックスの配列）。 */
+export async function deleteRows(token: string, sheetId: number, rowIndices: number[]) {
+  if (rowIndices.length === 0) return
+  // 行ズレを防ぐため降順で削除
+  const sorted = [...new Set(rowIndices)].sort((a, b) => b - a)
+  const res = await fetch(`${BASE}:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requests: sorted.map((rowIndex) => ({
+        deleteDimension: {
+          range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 },
+        },
+      })),
+    }),
+  })
+  return handle(res)
+}
+
 /** 指定範囲の末尾に行を追加する。 */
 export async function appendRows(
   token: string,

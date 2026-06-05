@@ -39,16 +39,18 @@ function nowTime(): string {
 }
 const salesKey = (date: string) => `kbtr_sales_${date}`
 
-// 大きいテンキー
-function Numpad({ onKey }: { onKey: (k: string) => void }) {
+// 大きいテンキー。fill=true で利用可能な高さいっぱいに広がる
+function Numpad({ onKey, fill = false }: { onKey: (k: string) => void; fill?: boolean }) {
   const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '00', '0', '⌫']
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className={`grid grid-cols-3 gap-2 ${fill ? 'flex-1 min-h-0' : ''}`}>
       {keys.map((k) => (
         <button
           key={k}
           onClick={() => onKey(k)}
-          className="py-5 rounded-xl bg-stone-100 text-stone-900 text-3xl font-bold active:bg-stone-200 active:scale-95 transition-transform"
+          className={`rounded-xl bg-stone-100 text-stone-900 text-3xl font-bold active:bg-stone-200 active:scale-95 transition-transform ${
+            fill ? 'min-h-[3.5rem]' : 'py-4'
+          }`}
         >
           {k}
         </button>
@@ -361,26 +363,35 @@ export default function PosPage() {
   // ── 預り金入力（電卓） ──
   if (step === 'pay') {
     return (
-      <div className="p-4 max-w-md mx-auto pb-48">
-        <button onClick={() => setStep('select')} className="text-stone-500 self-start mb-3">
-          ← 戻る
-        </button>
-        <div className="flex items-baseline justify-between mb-3">
-          <span className="text-stone-500">合計（{cartCount}点）</span>
-          <span className="text-3xl font-bold text-stone-900">
-            ¥{cartTotal.toLocaleString()}
-          </span>
+      <div
+        className="flex flex-col max-w-md mx-auto px-4 pt-2"
+        style={{
+          // モバイル下部ナビ(64px)＋セーフエリアを避ける。固定配置は使わない
+          minHeight: '100svh',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 5rem)',
+        }}
+      >
+        <div className="flex items-center justify-between mb-2 shrink-0">
+          <button onClick={() => setStep('select')} className="text-stone-500 py-1">
+            ← 戻る
+          </button>
+          <div className="flex items-baseline gap-2">
+            <span className="text-stone-400 text-sm">合計（{cartCount}点）</span>
+            <span className="text-2xl font-bold text-stone-900">
+              ¥{cartTotal.toLocaleString()}
+            </span>
+          </div>
         </div>
 
         {/* 預り金・お釣り表示 */}
-        <div className="rounded-2xl border-2 border-amber-400 p-4 mb-3">
+        <div className="rounded-2xl border-2 border-amber-400 p-3 mb-2 shrink-0">
           <div className="flex items-baseline justify-between">
             <span className="text-stone-500 text-sm">預り金</span>
-            <span className="text-4xl font-bold text-stone-900">
+            <span className="text-3xl font-bold text-stone-900">
               ¥{receivedNum.toLocaleString()}
             </span>
           </div>
-          <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-stone-200">
+          <div className="flex items-baseline justify-between mt-1.5 pt-1.5 border-t border-stone-200">
             <span className="text-stone-500 text-sm">お釣り</span>
             <span
               className={`text-2xl font-bold ${
@@ -397,10 +408,10 @@ export default function PosPage() {
         </div>
 
         {/* クイック金額 */}
-        <div className="grid grid-cols-4 gap-2 mb-2">
+        <div className="grid grid-cols-4 gap-2 mb-2 shrink-0">
           <button
             onClick={() => setReceived(String(cartTotal))}
-            className="py-3 rounded-xl bg-amber-50 text-amber-800 font-bold active:scale-95"
+            className="py-2.5 rounded-xl bg-amber-50 text-amber-800 font-bold active:scale-95"
           >
             ちょうど
           </button>
@@ -408,32 +419,31 @@ export default function PosPage() {
             <button
               key={amt}
               onClick={() => setReceived(String(amt))}
-              className="py-3 rounded-xl bg-stone-100 text-stone-800 font-semibold active:scale-95"
+              className="py-2.5 rounded-xl bg-stone-100 text-stone-800 font-semibold active:scale-95"
             >
               {amt / 1000}千
             </button>
           ))}
         </div>
 
-        <Numpad onKey={pressReceived} />
-        <button
-          onClick={() => setReceived('')}
-          className="w-full mt-2 py-2 rounded-lg text-stone-500 text-sm"
-        >
-          クリア
-        </button>
+        {/* テンキー：残りの高さいっぱいに広がる（iPad/iPhoneどちらも下部に寄る） */}
+        <Numpad onKey={pressReceived} fill />
 
-        {/* 会計ボタン：画面下部に固定 */}
-        <div className="fixed bottom-0 left-0 right-0 md:left-52 lg:left-60 bg-white border-t border-stone-200 p-4 z-30">
-          <div className="mx-auto max-w-md">
-            <button
-              onClick={() => setStep('change')}
-              disabled={received === '' || change < 0}
-              className="w-full bg-amber-700 text-[#faf9f5] py-5 rounded-2xl font-bold text-xl disabled:opacity-30 active:scale-95 transition-transform"
-            >
-              会計する
-            </button>
-          </div>
+        {/* 会計操作：通常フロー内（固定配置なし） */}
+        <div className="flex items-center gap-3 mt-3 shrink-0">
+          <button
+            onClick={() => setReceived('')}
+            className="px-5 py-4 rounded-2xl bg-stone-100 text-stone-500 font-semibold active:scale-95 shrink-0"
+          >
+            クリア
+          </button>
+          <button
+            onClick={() => setStep('change')}
+            disabled={received === '' || change < 0}
+            className="flex-1 bg-amber-700 text-[#faf9f5] py-4 rounded-2xl font-bold text-xl disabled:opacity-30 active:scale-95 transition-transform"
+          >
+            会計する
+          </button>
         </div>
       </div>
     )

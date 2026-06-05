@@ -7,6 +7,7 @@ import {
   updateValues,
   appendRows,
   deleteRow,
+  deleteRows,
   getSheetId,
   AuthExpiredError,
 } from '../lib/sheets'
@@ -107,6 +108,8 @@ export default function DashboardPage() {
           otherCost: Number(r[7]) || 0,
           uzuraCost: Number(r[8]) || 0,
         }))
+      // 営業履歴（営業サマリー）に存在する日付のものだけを商品別集計の対象にする
+      const validDates = new Set(newSummaries.map((s) => s.date))
       const newRecords = rec
         .filter((r) => (r[0] ?? '').trim() && (r[1] ?? '').trim())
         .map((r) => ({
@@ -115,6 +118,7 @@ export default function DashboardPage() {
           qty: Number(r[2]) || 0,
           subtotal: Number(r[4]) || 0,
         }))
+        .filter((r) => validDates.has(r.date))
       setSummaries(newSummaries)
       setRecords(newRecords)
       setCached('dash_summaries', newSummaries)
@@ -188,6 +192,20 @@ export default function DashboardPage() {
     try {
       const sheetId = await getSheetId(token, '営業サマリー')
       await deleteRow(token, sheetId, s.idx + 1) // 0始まり行（ヘッダー=0）
+      // 同じ日付の商品別記録（営業記録）も削除する
+      try {
+        const recRows = await readRange(token, '営業記録!A2:A')
+        const targetRows = recRows
+          .map((r, i) => ({ date: (r[0] ?? '').trim(), rowIdx: i + 1 })) // ヘッダー=0、A2=1
+          .filter((x) => x.date === s.date)
+          .map((x) => x.rowIdx)
+        if (targetRows.length > 0) {
+          const recSheetId = await getSheetId(token, '営業記録')
+          await deleteRows(token, recSheetId, targetRows)
+        }
+      } catch {
+        /* 営業記録の削除に失敗しても営業履歴の削除は成立させる */
+      }
       setOpenId(null)
       setEditId(null)
       clearCache('dash_summaries')
