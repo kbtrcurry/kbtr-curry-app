@@ -88,6 +88,7 @@ export function SwipeNav({ children }: { children: ReactNode }) {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      className="w-full"
       style={{
         transform: dx ? `translateX(${dx}px)` : undefined,
         transition: animating ? 'transform 0.22s ease-out' : undefined,

@@ -90,9 +90,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* メイン */}
-      <main className="flex-1 min-w-0 pb-24 md:pb-10">
-        <div className="mx-auto w-full max-w-screen-sm lg:max-w-3xl">{children}</div>
-      </main>
+      <main className="flex-1 min-w-0 pb-24 md:pb-10">{children}</main>
 
       {/* ボトムナビ（モバイル） */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex z-40">
@@ -125,14 +123,16 @@ export default function App() {
           <BackHandlerProvider>
           <Layout>
             <SwipeNav>
-              <Routes>
-                <Route path="/" element={<PosPage />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/ingredients" element={<IngredientsPage />} />
-                <Route path="/recipe" element={<RecipePage />} />
-                <Route path="/prep" element={<PrepPage />} />
-                <Route path="/menu" element={<MenuSettingsPage />} />
-              </Routes>
+              <div className="mx-auto w-full max-w-screen-sm lg:max-w-3xl">
+                <Routes>
+                  <Route path="/" element={<PosPage />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/ingredients" element={<IngredientsPage />} />
+                  <Route path="/recipe" element={<RecipePage />} />
+                  <Route path="/prep" element={<PrepPage />} />
+                  <Route path="/menu" element={<MenuSettingsPage />} />
+                </Routes>
+              </div>
             </SwipeNav>
           </Layout>
           </BackHandlerProvider>

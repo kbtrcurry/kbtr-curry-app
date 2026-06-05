@@ -392,27 +392,27 @@ export default function PosPage() {
 
         {/* 本体：モバイルは縦1列、iPad（md以上）は左に表示・右にテンキーの2列 */}
         <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 md:auto-rows-fr md:gap-8 md:items-stretch">
-          {/* 左：お会計・お預かり・おつり＋紙幣ボタン */}
-          <div className="flex flex-col shrink-0 md:shrink md:justify-center md:gap-4">
-            {/* 金額パネル（Airレジ風の積み重ね表示） */}
-            <div className="rounded-2xl bg-white border border-stone-200 overflow-hidden mb-2 md:mb-0 shrink-0">
+          {/* 左：お会計・お預かり・おつり＋紙幣ボタン（iPadでは左上寄せ） */}
+          <div className="flex flex-col shrink-0 md:justify-start md:gap-3 md:self-start md:w-full">
+            {/* 金額パネル（ヘッダーの帯と同じ色／Airレジ風の積み重ね表示） */}
+            <div className="rounded-2xl bg-stone-900 border border-stone-300 overflow-hidden mb-2 md:mb-0 shrink-0">
               <div className="flex items-baseline justify-between px-4 py-2.5 md:py-4">
-                <span className="text-stone-500 text-sm md:text-lg">お会計（{cartCount}点）</span>
-                <span className="text-2xl md:text-4xl font-bold text-stone-900">
+                <span className="text-stone-400 text-sm md:text-lg">お会計（{cartCount}点）</span>
+                <span className="text-2xl md:text-4xl font-bold text-stone-100">
                   ¥{cartTotal.toLocaleString()}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between px-4 py-2.5 md:py-4 border-t border-stone-200 bg-stone-50">
-                <span className="text-stone-600 text-sm md:text-lg">お預かり</span>
-                <span className="text-4xl md:text-6xl font-bold text-stone-900 tracking-tight">
+              <div className="flex items-baseline justify-between px-4 py-2.5 md:py-4 border-t border-stone-300">
+                <span className="text-stone-400 text-sm md:text-lg">お預かり</span>
+                <span className="text-4xl md:text-6xl font-bold text-stone-100 tracking-tight">
                   ¥{receivedNum.toLocaleString()}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between px-4 py-2.5 md:py-4 border-t border-stone-200">
-                <span className="text-stone-600 text-sm md:text-lg">おつり</span>
+              <div className="flex items-baseline justify-between px-4 py-2.5 md:py-4 border-t border-stone-300">
+                <span className="text-stone-400 text-sm md:text-lg">おつり</span>
                 <span
                   className={`text-3xl md:text-5xl font-bold tracking-tight ${
-                    received === '' ? 'text-stone-300' : change < 0 ? 'text-red-500' : 'text-green-600'
+                    received === '' ? 'text-stone-400' : change < 0 ? 'text-red-600' : 'text-green-700'
                   }`}
                 >
                   {received === ''
