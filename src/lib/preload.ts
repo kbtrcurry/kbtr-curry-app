@@ -51,6 +51,7 @@ export async function preloadAll(token: string): Promise<void> {
         uzuraCost: num(r[8]),
       }))
     const validDates = new Set(summaries.map((s) => s.date))
+    const seenRec = new Set<string>()
     const records = recordRows
       .filter((r) => (r[0] ?? '').trim() && (r[1] ?? '').trim())
       .map((r) => ({
@@ -60,6 +61,12 @@ export async function preloadAll(token: string): Promise<void> {
         subtotal: num(r[4]),
       }))
       .filter((r) => validDates.has(r.date))
+      .filter((r) => {
+        const k = `${r.date}|${r.menu}|${r.qty}|${r.subtotal}`
+        if (seenRec.has(k)) return false
+        seenRec.add(k)
+        return true
+      })
     setCached('dash_summaries', summaries)
     setCached('dash_records', records)
 

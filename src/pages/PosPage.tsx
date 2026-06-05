@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../lib/auth'
 import { Spinner } from '../components/Spinner'
-import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
+import { readRange, appendRows, deleteRows, getSheetId, AuthExpiredError } from '../lib/sheets'
 import { loadRecipes, type DetailItem } from '../lib/recipes'
 import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
 import { usePersistedState } from '../lib/persistState'
@@ -341,6 +341,20 @@ export default function PosPage() {
         v.price,
         v.price * v.qty,
       ])
+      // 同じ日付を締め直したときに二重計上しないよう、既存の当日分を削除してから追加
+      try {
+        const existing = await readRange(token, '営業記録!A2:A')
+        const dupRows = existing
+          .map((r, i) => ({ d: (r[0] ?? '').trim(), rowIdx: i + 1 })) // ヘッダー=0、A2=1
+          .filter((x) => x.d === date)
+          .map((x) => x.rowIdx)
+        if (dupRows.length > 0) {
+          const recSheetId = await getSheetId(token, '営業記録')
+          await deleteRows(token, recSheetId, dupRows)
+        }
+      } catch {
+        /* 既存削除に失敗しても追加は行う（表示側で重複は除外される） */
+      }
       await appendRows(token, '営業記録!A:E', salesRows)
 
       let foodCost = 0

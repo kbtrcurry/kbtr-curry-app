@@ -118,6 +118,9 @@ export default function DashboardPage() {
         }))
       // 営業履歴（営業サマリー）に存在する日付のものだけを商品別集計の対象にする
       const validDates = new Set(newSummaries.map((s) => s.date))
+      // 締めを複数回行った等で生じる「同一日・同一メニュー・同一数量・同一金額」の
+      // 重複行は二重計上になるため除外する
+      const seenRec = new Set<string>()
       const newRecords = rec
         .filter((r) => (r[0] ?? '').trim() && (r[1] ?? '').trim())
         .map((r) => ({
@@ -127,6 +130,12 @@ export default function DashboardPage() {
           subtotal: Number(r[4]) || 0,
         }))
         .filter((r) => validDates.has(r.date))
+        .filter((r) => {
+          const k = `${r.date}|${r.menu}|${r.qty}|${r.subtotal}`
+          if (seenRec.has(k)) return false
+          seenRec.add(k)
+          return true
+        })
       setSummaries(newSummaries)
       setRecords(newRecords)
       setCached('dash_summaries', newSummaries)
