@@ -51,6 +51,31 @@ html,
 body {
   /* ブラウザ標準の左右端スワイプ（履歴の進む/戻る）を抑制 */
   overscroll-behavior-x: none;
+  /* 向き変更時の自動ズーム（文字拡大）を防止し、常に最適な大きさで表示 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* スマホ（縦持ち専用）：横向きになったら回転を促すオーバーレイを表示。
+   iPad（横向きでも高さが大きい）は対象外。 */
+.rotate-hint {
+  display: none;
+}
+@media (orientation: landscape) and (max-height: 540px) {
+  .rotate-hint {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 2rem;
+    text-align: center;
+    background: #191817;
+    color: #e0dbd2;
+  }
 }
 
 body {

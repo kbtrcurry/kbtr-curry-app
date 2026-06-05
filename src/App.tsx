@@ -28,13 +28,23 @@ const NAV_ITEMS = [
 const BOTTOM_NAV = NAV_ITEMS.slice(0, 5)
 
 function UpdateButton() {
-  const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW()
+  const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW({
+    onRegisteredSW(_swUrl, reg) {
+      // 1時間ごとに更新確認
+      if (reg) setInterval(() => reg.update(), 60 * 60 * 1000)
+    },
+  })
+
+  // 新バージョンを検知したら自動で適用＆再読み込み（手動タップ不要）
+  useEffect(() => {
+    if (needRefresh) updateServiceWorker(true)
+  }, [needRefresh, updateServiceWorker])
 
   return (
     <button
-      onClick={() => needRefresh ? updateServiceWorker(true) : window.location.reload()}
-      title={needRefresh ? '新しいバージョンがあります。タップして更新' : `v${__APP_VERSION__} — タップで再読み込み`}
-      className={`text-xl leading-none transition-transform active:scale-90 ${needRefresh ? 'animate-bounce' : ''}`}
+      onClick={() => window.location.reload()}
+      title={`v${__APP_VERSION__} — タップで再読み込み`}
+      className="text-xl leading-none transition-transform active:scale-90"
     >
       🍛
     </button>
@@ -53,6 +63,13 @@ function Preloader() {
 function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-svh md:flex">
+      {/* スマホ横向き時の回転促し（縦持ち専用） */}
+      <div className="rotate-hint">
+        <div className="text-5xl">📱</div>
+        <p className="text-lg font-bold text-amber-800">画面を縦にしてください</p>
+        <p className="text-sm text-stone-400">このアプリは縦向きでご利用ください</p>
+      </div>
+
       {/* モバイルヘッダー */}
       <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-stone-200 bg-stone-900">
         <UpdateButton />

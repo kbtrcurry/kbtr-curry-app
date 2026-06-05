@@ -25,7 +25,8 @@ export default defineConfig({
         theme_color: '#f5c800',
         background_color: '#f5c800',
         display: 'standalone',
-        orientation: 'portrait',
+        // iPadは横向きを許可（スマホ横はCSSオーバーレイで回転を促す）
+        orientation: 'any',
         icons: [
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
