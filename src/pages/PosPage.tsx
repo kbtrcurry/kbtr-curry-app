@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../lib/auth'
 import { Spinner } from '../components/Spinner'
 import { readRange, appendRows, AuthExpiredError } from '../lib/sheets'
@@ -24,8 +24,7 @@ type Receipt = {
 const DISABLED_FLAGS = ['off', 'false', '無効', 'no', '0']
 const QUICK_AMOUNTS = [1000, 5000, 10000]
 const MANUAL_LABEL = '金額入力'
-// 取り置きのサービス品（無料）。このレシピの一食原価 × 件数 をその他経費に加算する
-const TORIOKI_RECIPE = 'うずらのアチャール(50～55個版)'
+const TORIOKI_RECIPE_KEY = 'kbtr_torioki_recipe'
 
 function todayStr(): string {
   const d = new Date()
@@ -93,8 +92,13 @@ export default function PosPage() {
   const [locationFee, setLocationFee] = useState('5000')
   const [otherCost, setOtherCost] = useState('')
   const [torioki, setTorioki] = useState('')
+  const [toriokiRecipe, setToriokiRecipe] = useState<string>(
+    () => localStorage.getItem(TORIOKI_RECIPE_KEY) ?? '',
+  )
+  const [recipeNames, setRecipeNames] = useState<string[]>([])
   const [acharCost, setAcharCost] = useState<number | null>(null)
   const [acharLoading, setAcharLoading] = useState(false)
+  const costCtxRef = useRef<import('../lib/cost').CostCtx | null>(null)
   const [memo, setMemo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
@@ -231,17 +235,36 @@ export default function PosPage() {
     }
   }, [token])
 
-  // 締め画面を開く（取り置きサービス品の一食原価を取得）
+  // 締め画面を開く（レシピ一覧と原価コンテキストを取得）
   const openClosing = async () => {
     setClosing(true)
     setAcharLoading(true)
     try {
       const ctx = await buildCtx()
-      setAcharCost(Math.round(perServingCost(TORIOKI_RECIPE, ctx)))
+      costCtxRef.current = ctx
+      const names = Object.keys(ctx.recipeMap).sort()
+      setRecipeNames(names)
+      const saved = localStorage.getItem(TORIOKI_RECIPE_KEY) ?? ''
+      if (saved && names.includes(saved)) {
+        setAcharCost(Math.round(perServingCost(saved, ctx)))
+      } else {
+        setAcharCost(null)
+      }
     } catch {
       setAcharCost(null)
     } finally {
       setAcharLoading(false)
+    }
+  }
+
+  const handleToriokiRecipeChange = (name: string) => {
+    setToriokiRecipe(name)
+    localStorage.setItem(TORIOKI_RECIPE_KEY, name)
+    const ctx = costCtxRef.current
+    if (name && ctx) {
+      setAcharCost(Math.round(perServingCost(name, ctx)))
+    } else {
+      setAcharCost(null)
     }
   }
 
@@ -275,15 +298,15 @@ export default function PosPage() {
       await appendRows(token, '営業記録!A:E', salesRows)
 
       let foodCost = 0
-      let serviceCost = 0 // 取り置きのサービス品（うずらのアチャール）原価
+      let serviceCost = 0 // 取り置き特典原価
       try {
-        const ctx = await buildCtx()
+        const ctx = costCtxRef.current ?? (await buildCtx())
         const recipeOf: Record<string, string> = {}
         for (const m of menus) recipeOf[m.name] = m.recipe
         for (const v of Object.values(agg)) {
           foodCost += menuUnitCost(recipeOf[v.name] ?? '', ctx) * v.qty
         }
-        serviceCost = toriokiN * perServingCost(TORIOKI_RECIPE, ctx)
+        if (toriokiRecipe) serviceCost = toriokiN * perServingCost(toriokiRecipe, ctx)
       } catch {
         foodCost = 0
         serviceCost = toriokiN * (acharCost ?? 0)
@@ -294,7 +317,7 @@ export default function PosPage() {
       const totalDeduct = foodCost + fee + other + serviceCost
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
       const note = `${memo}${memo ? ' ' : ''}(${sales.length}組${
-        toriokiN > 0 ? ` うずら${toriokiN}食` : ''
+        toriokiN > 0 ? ` 取り置き${toriokiN}人` : ''
       })`
 
       await appendRows(token, '営業サマリー!A:I', [
@@ -307,6 +330,7 @@ export default function PosPage() {
       setLocationFee('5000')
       setOtherCost('')
       setTorioki('')
+      setAcharCost(null)
       setMemo('')
       setClosing(false)
       setDone(true)
@@ -715,11 +739,29 @@ export default function PosPage() {
               </div>
             </div>
 
-            {/* うずらの食数（うずらのアチャール原価を経費に加算） */}
-            <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-3">
+            {/* 取り置き特典 */}
+            <div className="bg-amber-50/60 border border-amber-200 rounded-lg p-3 space-y-2">
+              <p className="text-sm font-semibold text-stone-700">取り置き特典</p>
+              <div>
+                <label className="block text-xs text-stone-500 mb-1">対象レシピ</label>
+                {acharLoading ? (
+                  <p className="text-stone-400 text-sm">レシピ読み込み中…</p>
+                ) : (
+                  <select
+                    value={toriokiRecipe}
+                    onChange={(e) => handleToriokiRecipeChange(e.target.value)}
+                    className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="">（なし）</option>
+                    {recipeNames.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className="block text-sm text-stone-500 mb-1">うずらの食数</label>
+                  <label className="block text-xs text-stone-500 mb-1">取り置き特典（人）</label>
                   <input
                     type="number"
                     inputMode="numeric"
@@ -730,26 +772,27 @@ export default function PosPage() {
                   />
                 </div>
                 <div className="flex-1 text-sm text-stone-600 pb-1">
-                  {acharLoading ? (
-                    <span className="text-stone-400">原価を計算中…</span>
-                  ) : acharCost === null ? (
-                    <span className="text-amber-600">
-                      「{TORIOKI_RECIPE}」のレシピ未登録（原価0）
-                    </span>
-                  ) : (
+                  {toriokiRecipe && acharCost !== null ? (
                     <>
-                      {TORIOKI_RECIPE} ¥{acharCost.toLocaleString()}/食
-                      <br />
-                      サービス分{' '}
-                      <span className="font-bold text-stone-800">
-                        ¥{toriokiCost.toLocaleString()}
-                      </span>
+                      ¥{acharCost.toLocaleString()}/食
+                      {toriokiN > 0 && (
+                        <>
+                          {' → '}
+                          <span className="font-bold text-stone-800">
+                            ¥{toriokiCost.toLocaleString()}
+                          </span>
+                        </>
+                      )}
                     </>
+                  ) : toriokiRecipe ? (
+                    <span className="text-amber-600 text-xs">原価を取得できませんでした</span>
+                  ) : (
+                    <span className="text-stone-400 text-xs">レシピを選択してください</span>
                   )}
                 </div>
               </div>
-              <p className="text-xs text-stone-400 mt-1">
-                ※ うずら原価として売上サマリーに別途記録されます
+              <p className="text-xs text-stone-400">
+                ※ 取り置き原価として売上サマリーに別途記録されます
               </p>
             </div>
 
