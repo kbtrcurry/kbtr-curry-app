@@ -107,12 +107,25 @@ export default function RecipePage() {
     try {
       const [rd, master] = await Promise.all([
         loadRecipes(token),
-        readRange(token, '食材マスタ!A2:D'),
+        readRange(token, '食材マスタ!A2:I'),
       ])
       const prices: Record<string, number> = {}
       for (const r of master) {
         const name = (r[0] ?? '').trim()
-        if (name) prices[name] = Number(r[3]) || 0
+        if (!name) continue
+        const pricePerG = Number(r[3]) || 0  // D列: 単価(円/g)
+        if (pricePerG > 0) {
+          prices[name] = pricePerG
+        } else {
+          // D列が空の場合はG(単品重量)とI(単品価格)から計算
+          const weight = Number(r[6]) || 0   // G列: 単品重量
+          const unitPrice = Number(r[8]) || 0 // I列: 単品価格
+          if (weight > 0 && unitPrice > 0) {
+            prices[name] = unitPrice / weight
+          } else {
+            prices[name] = 0
+          }
+        }
       }
       const c: RecipeCache = {
         priceMap: prices, recipeMap: rd.recipeMap, typeMap: rd.typeMap,
