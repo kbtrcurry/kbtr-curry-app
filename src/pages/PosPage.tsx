@@ -6,7 +6,7 @@ import { loadRecipes, type DetailItem } from '../lib/recipes'
 import { menuUnitCost, perServingCost, type CostCtx } from '../lib/cost'
 import { usePersistedState } from '../lib/persistState'
 import { getCached, setCached } from '../lib/dataCache'
-import { getEventData, patchEventData } from '../lib/eventData'
+import { patchEventData } from '../lib/eventData'
 import { useKeyboardOffset } from '../lib/useKeyboardOffset'
 import { useRegisterBack } from '../lib/backHandler'
 
@@ -127,12 +127,6 @@ export default function PosPage() {
   const [memo, setMemo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
-
-  // 仕入れ実費（今日分・localStorageから初期化）
-  const [costStr, setCostStr] = useState(() => {
-    const c = getEventData(todayStr()).cost
-    return c != null && c > 0 ? String(c) : ''
-  })
 
   const kbOffset = useKeyboardOffset()
 
@@ -383,17 +377,16 @@ export default function PosPage() {
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
       const groups = sales.length
       const totalPeople = sales.reduce((a, r) => a + (r.people ?? 1), 0)
-      const actualCost = Number(costStr) || 0
       const note = `${memo}${memo ? ' ' : ''}(${groups}組${
         totalPeople > 0 ? ` ${totalPeople}人` : ''
       }${toriokiN > 0 ? ` 取り置き${toriokiN}人` : ''})`
 
-      // 営業サマリー A:L（J=組数, K=客数, L=実仕入れ）
-      await appendRows(token, '営業サマリー!A:L', [
-        [date, dayTotal, foodCost, fee, dayTotal - totalDeduct, rate, note, other, serviceCost, groups, totalPeople, actualCost],
+      // 営業サマリー A:K（J=組数, K=客数）。L=実仕入れは廃止（食材費は経費タブの「仕入れ」で都度入力）
+      await appendRows(token, '営業サマリー!A:K', [
+        [date, dayTotal, foodCost, fee, dayTotal - totalDeduct, rate, note, other, serviceCost, groups, totalPeople],
       ])
-      // 組数・客数・仕入れ実費をlocalStorageにも保存（移行・分析用）
-      patchEventData(date, { groups, people: totalPeople, cost: actualCost })
+      // 組数・客数をlocalStorageにも保存（移行・分析用）
+      patchEventData(date, { groups, people: totalPeople })
       localStorage.removeItem(salesKey(date))
       setSales([])
       setLocationFee('5000')
@@ -818,31 +811,6 @@ export default function PosPage() {
                   placeholder="0"
                   className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
                 />
-              </div>
-            </div>
-
-            {/* 仕入れ実費 */}
-            <div>
-              <label className="block text-sm text-stone-500 mb-1">仕入れ実費（円）</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  value={costStr}
-                  onChange={(e) => {
-                    setCostStr(e.target.value)
-                    patchEventData(todayStr(), { cost: Number(e.target.value) || 0 })
-                  }}
-                  placeholder="0"
-                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-lg"
-                />
-                {Number(costStr) > 0 && (
-                  <span className="text-sm text-stone-500 shrink-0">
-                    粗利 <b className={dayTotal - Number(costStr) >= 0 ? 'text-green-700' : 'text-red-600'}>
-                      ¥{(dayTotal - Number(costStr)).toLocaleString()}
-                    </b>
-                  </span>
-                )}
               </div>
             </div>
 

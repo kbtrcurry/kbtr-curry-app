@@ -88,11 +88,13 @@ function daysAgoStr(days: number): string {
 
 // 経費（イレギュラー出費）台帳
 type Expense = { idx: number; date: string; category: string; content: string; amount: number; memo: string }
-const EXPENSE_CATS = ['試作', '消耗品', '備品', '設備', 'その他'] as const
+const EXPENSE_CATS = ['仕入れ', '試作', '消耗品', '備品', '設備', 'その他'] as const
+const PURCHASE_CAT = '仕入れ' // 食材仕入れ（実費の食材費として扱う）
 const EXPENSE_HEADER = ['日付', 'カテゴリ', '内容', '金額', 'メモ']
 const CAT_CLS: Record<string, string> = {
+  仕入れ: 'bg-green-100 text-green-700',
   試作: 'bg-amber-100 text-amber-800',
-  消耗品: 'bg-green-100 text-green-700',
+  消耗品: 'bg-amber-100 text-amber-800',
   備品: 'bg-stone-200 text-stone-700',
   設備: 'bg-red-100 text-red-600',
   その他: 'bg-stone-100 text-stone-500',
@@ -391,16 +393,15 @@ export default function DashboardPage() {
       const rate = sales > 0 ? Math.round((foodCost / sales) * 1000) / 10 : 0
       const groups = Number(edit.groups) || 0
       const people = Number(edit.people) || 0
-      const actual = Number(edit.actualCost) || 0
       const rowVals = [
         edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, uzura,
-        groups, people, actual,
+        groups, people,
       ]
       if (s) {
-        const row = s.idx + 2 // A2 が先頭データ行
-        await updateValues(token, `営業サマリー!A${row}:L${row}`, [rowVals])
+        const row = s.idx + 2 // A2 が先頭データ行（L列の旧・実仕入れは保持）
+        await updateValues(token, `営業サマリー!A${row}:K${row}`, [rowVals])
       } else {
-        await appendRows(token, '営業サマリー!A:L', [rowVals])
+        await appendRows(token, '営業サマリー!A:K', [rowVals])
       }
       setEditId(null)
       clearCache('dash_summaries')
@@ -491,7 +492,7 @@ export default function DashboardPage() {
   // ── 経費台帳 CRUD ──
   const startExpNew = () => {
     setExpEditId('new')
-    setExpEdit({ date: todayStr(), category: '試作', content: '', amount: '', memo: '' })
+    setExpEdit({ date: todayStr(), category: PURCHASE_CAT, content: '', amount: '', memo: '' })
   }
   const startExpEdit = (e: Expense) => {
     setExpEditId(String(e.idx))
@@ -557,20 +558,25 @@ export default function DashboardPage() {
   const pFoodCost = pSummaries.reduce((a, s) => a + s.foodCost, 0) // 理論
   const pProfitEst = pSummaries.reduce((a, s) => a + s.profit, 0) // 推定（営業）利益
   const pPeople = pSummaries.reduce((a, s) => a + peopleOf(s), 0)
-  // 実費の食材費：実仕入れ(L) があればそれ、無ければ理論原価で代用
-  const faOf = (s: Summary) => (actualCostOf(s) > 0 ? actualCostOf(s) : s.foodCost)
-  const pPurchase = pSummaries.reduce((a, s) => a + faOf(s), 0)
-  const usedTheoretical = pSummaries.some((s) => actualCostOf(s) <= 0 && s.foodCost > 0)
-  // 期間内の経費台帳
+  // 期間内の経費台帳。仕入れ（食材費）とそれ以外に分ける
   const pExpenses = expenses.filter((e) => inPeriod(e.date))
-  const pLedger = pExpenses.reduce((a, e) => a + e.amount, 0)
-  // 実際の利益（実費ベース）＝売上 −（場所代＋仕入れ＋その他＋取り置き＋経費）
-  const pActual = pSales - pFee - pPurchase - pOther - pUzura - pLedger
-  // 推定利益（原価計算ベース）－経費
-  const pEst = pProfitEst - pLedger
+  const pLedgerPurchaseNew = pExpenses
+    .filter((e) => e.category === PURCHASE_CAT)
+    .reduce((a, e) => a + e.amount, 0)
+  const pLedgerOther = pExpenses
+    .filter((e) => e.category !== PURCHASE_CAT)
+    .reduce((a, e) => a + e.amount, 0)
+  // 旧データ：締めで入力した実仕入れ(L列)も食材費として扱う（後方互換）
+  const pLegacyPurchase = pSummaries.reduce((a, s) => a + actualCostOf(s), 0)
+  const pPurchase = pLedgerPurchaseNew + pLegacyPurchase // 期間の食材仕入れ合計（実費）
+  const noPurchase = pPurchase <= 0 && pSales > 0 // 仕入れ未記録
+  // 実際の利益（実費ベース）＝売上 −（仕入れ＋場所代＋その他＋取り置き＋経費その他）
+  const pActual = pSales - pPurchase - pFee - pOther - pUzura - pLedgerOther
+  // 推定利益（原価計算ベース）：営業利益(理論)から経費その他のみ控除（仕入れは理論原価で計上済み）
+  const pEst = pProfitEst - pLedgerOther
   const pRate = pSales > 0 ? (pFoodCost / pSales) * 100 : null
   const avgTicket = pPeople > 0 ? pSales / pPeople : null
-  const pCostTotal = pFee + pPurchase + pOther + pUzura + pLedger
+  const pCostTotal = pPurchase + pFee + pOther + pUzura + pLedgerOther
 
   // 経費（今月／累計／カテゴリ別）— 経費タブ用（今月固定）
   const tmExpenses = expenses.filter((e) => monthOf(e.date) === tm)
@@ -790,7 +796,7 @@ export default function DashboardPage() {
                   <Row label="− 場所代" value={yen(pFee)} />
                   {pOther > 0 && <Row label="− その他経費" value={yen(pOther)} />}
                   {pUzura > 0 && <Row label="− 取り置き原価" value={yen(pUzura)} />}
-                  {pLedger > 0 && <Row label="− 経費（試作・備品など）" value={yen(pLedger)} />}
+                  {pLedgerOther > 0 && <Row label="− 経費（試作・備品など）" value={yen(pLedgerOther)} />}
                 </div>
                 <div className="flex items-center justify-between border-t border-stone-200 mt-2 pt-2">
                   <span className="text-stone-500">実費合計</span>
@@ -802,9 +808,9 @@ export default function DashboardPage() {
                     {yen(pActual)}
                   </span>
                 </div>
-                {usedTheoretical && (
-                  <p className="text-xs text-stone-400 mt-2">
-                    ※ 実仕入れ未入力の営業は理論原価で代用しています（レジの締めで実仕入れを入力すると正確になります）。
+                {noPurchase && (
+                  <p className="text-xs text-amber-700 mt-2">
+                    ※ この期間は仕入れ（食材費）が未記録です。経費タブの「仕入れ」カテゴリで、買った日に都度入力してください。
                   </p>
                 )}
               </div>
@@ -861,10 +867,9 @@ export default function DashboardPage() {
                     <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
                   </div>
                   <SalesExtraFields
-                    groups={edit.groups} people={edit.people} actualCost={edit.actualCost}
+                    groups={edit.groups} people={edit.people}
                     onG={(v) => setEdit((e) => ({ ...e, groups: v }))}
                     onP={(v) => setEdit((e) => ({ ...e, people: v }))}
-                    onC={(v) => setEdit((e) => ({ ...e, actualCost: v }))}
                   />
                   <ToriokiEditFields
                     countStr={edit.toriokiN}
@@ -949,10 +954,9 @@ export default function DashboardPage() {
                           <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
                         </div>
                         <SalesExtraFields
-                          groups={edit.groups} people={edit.people} actualCost={edit.actualCost}
+                          groups={edit.groups} people={edit.people}
                           onG={(v) => setEdit((e) => ({ ...e, groups: v }))}
                           onP={(v) => setEdit((e) => ({ ...e, people: v }))}
-                          onC={(v) => setEdit((e) => ({ ...e, actualCost: v }))}
                         />
                         <ToriokiEditFields
                           countStr={edit.toriokiN}
@@ -1310,7 +1314,7 @@ export default function DashboardPage() {
               <div className="space-y-2 mt-2">
                 {expSorted.length === 0 && expEditId !== 'new' && (
                   <p className="text-center text-stone-400 text-sm py-8">
-                    まだ経費がありません。試作・容器・備品などの出費をここに記録します。
+                    まだ経費がありません。食材の仕入れ・試作・容器・備品などの出費を、買った日にここへ記録します。
                   </p>
                 )}
                 {expSorted.map((e) => {
@@ -1428,7 +1432,7 @@ function ExpenseForm({
           type="text"
           value={edit.content}
           onChange={(e) => setEdit((p) => ({ ...p, content: e.target.value }))}
-          placeholder="例：ビリヤニ試作 / テイクアウト容器100個"
+          placeholder="例：スパイス・米の仕入れ / ビリヤニ試作 / 容器100個"
           className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
         />
       </div>
@@ -1568,23 +1572,18 @@ function ToriokiEditFields({
 function SalesExtraFields({
   groups,
   people,
-  actualCost,
   onG,
   onP,
-  onC,
 }: {
   groups: string
   people: string
-  actualCost: string
   onG: (v: string) => void
   onP: (v: string) => void
-  onC: (v: string) => void
 }) {
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-2 gap-2">
       <NumField label="組数" value={groups} onChange={onG} />
       <NumField label="客数" value={people} onChange={onP} />
-      <NumField label="実仕入れ(円)" value={actualCost} onChange={onC} />
     </div>
   )
 }
