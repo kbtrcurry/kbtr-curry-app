@@ -24,7 +24,7 @@ export async function preloadAll(token: string): Promise<void> {
       loadRecipes(token),
       readRange(token, '食材マスタ!A2:J'),
       readRange(token, 'メニュー構成!A2:D'),
-      readRange(token, '営業サマリー!A2:I'),
+      readRange(token, '営業サマリー!A2:L'),
       readRange(token, '営業記録!A2:E'),
     ])
 
@@ -49,6 +49,9 @@ export async function preloadAll(token: string): Promise<void> {
         memo: (r[6] ?? '').trim(),
         otherCost: num(r[7]),
         uzuraCost: num(r[8]),
+        groups: num(r[9]),
+        people: num(r[10]),
+        actualCost: num(r[11]),
       }))
     const validDates = new Set(summaries.map((s) => s.date))
     const seenRec = new Set<string>()

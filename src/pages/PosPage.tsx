@@ -20,6 +20,7 @@ type Receipt = {
   total: number
   received: number
   change: number
+  people?: number // この会計の人数（既定1）
 }
 
 // RecipePage と同じ recipe_data キャッシュの形（必要な分だけ）
@@ -95,6 +96,8 @@ export default function PosPage() {
     'select',
   )
   const [received, setReceived] = usePersistedState('kbtr_view_pos_received', '')
+  // この会計の人数（既定1人）。会計確定後に1へリセット
+  const [people, setPeople] = usePersistedState<number>('kbtr_view_pos_people', 1)
 
   // 手動金額モーダル
   const [manualOpen, setManualOpen] = useState(false)
@@ -232,11 +235,13 @@ export default function PosPage() {
       total: cartTotal,
       received: receivedNum,
       change,
+      people: Math.max(1, people),
     }
     persistSales([...sales, receipt])
     setQty({})
     setManualItems([])
     setReceived('')
+    setPeople(1)
     setStep('select')
   }
 
@@ -376,15 +381,19 @@ export default function PosPage() {
       const other = misc // その他経費（手入力分のみ）
       const totalDeduct = foodCost + fee + other + serviceCost
       const rate = dayTotal > 0 ? Math.round((foodCost / dayTotal) * 1000) / 10 : 0
-      const note = `${memo}${memo ? ' ' : ''}(${sales.length}組${
-        toriokiN > 0 ? ` 取り置き${toriokiN}人` : ''
-      })`
+      const groups = sales.length
+      const totalPeople = sales.reduce((a, r) => a + (r.people ?? 1), 0)
+      const actualCost = Number(costStr) || 0
+      const note = `${memo}${memo ? ' ' : ''}(${groups}組${
+        totalPeople > 0 ? ` ${totalPeople}人` : ''
+      }${toriokiN > 0 ? ` 取り置き${toriokiN}人` : ''})`
 
-      await appendRows(token, '営業サマリー!A:I', [
-        [date, dayTotal, foodCost, fee, dayTotal - totalDeduct, rate, note, other, serviceCost],
+      // 営業サマリー A:L（J=組数, K=客数, L=実仕入れ）
+      await appendRows(token, '営業サマリー!A:L', [
+        [date, dayTotal, foodCost, fee, dayTotal - totalDeduct, rate, note, other, serviceCost, groups, totalPeople, actualCost],
       ])
-      // 組数と仕入れ実費をlocalStorageに保存（分析用）
-      patchEventData(date, { groups: sales.length })
+      // 組数・客数・仕入れ実費をlocalStorageにも保存（移行・分析用）
+      patchEventData(date, { groups, people: totalPeople, cost: actualCost })
       localStorage.removeItem(salesKey(date))
       setSales([])
       setLocationFee('5000')
@@ -466,6 +475,28 @@ export default function PosPage() {
                       ? `不足 ¥${(-change).toLocaleString()}`
                       : `¥${change.toLocaleString()}`}
                 </span>
+              </div>
+            </div>
+
+            {/* 人数（客数）ステッパー */}
+            <div className="flex items-center justify-between rounded-2xl bg-white border border-stone-200 px-4 py-2 mb-2 md:mb-0 shrink-0">
+              <span className="text-stone-500 text-sm md:text-lg">人数</span>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setPeople((p) => Math.max(1, p - 1))}
+                  className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-stone-100 text-stone-700 text-2xl font-bold flex items-center justify-center active:bg-stone-200"
+                >
+                  −
+                </button>
+                <span className="w-10 text-center text-2xl md:text-3xl font-bold text-stone-900">
+                  {people}
+                </span>
+                <button
+                  onClick={() => setPeople((p) => p + 1)}
+                  className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-amber-700 text-[#faf9f5] text-2xl font-bold flex items-center justify-center active:brightness-95"
+                >
+                  ＋
+                </button>
               </div>
             </div>
 
@@ -756,8 +787,10 @@ export default function PosPage() {
           >
             <h2 className="text-lg font-bold text-stone-900">本日の締め</h2>
             <div className="flex justify-between text-stone-600">
-              <span>会計組数</span>
-              <span className="font-bold">{sales.length} 組</span>
+              <span>会計組数 / 客数</span>
+              <span className="font-bold">
+                {sales.length} 組 / {sales.reduce((a, r) => a + (r.people ?? 1), 0)} 人
+              </span>
             </div>
             <div className="flex justify-between text-stone-600">
               <span>売上合計</span>

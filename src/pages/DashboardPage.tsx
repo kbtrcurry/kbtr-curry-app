@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../lib/auth'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { Spinner } from '../components/Spinner'
@@ -44,6 +44,11 @@ function getRecipeCtx(): { ctx: CostCtx | null; names: string[] } {
     names: c.names ?? [],
   }
 }
+// レジのメニュー（名前→価格・レシピ）
+type PosMenu = { name: string; price: number; recipe: string }
+function getPosMenus(): PosMenu[] {
+  return getCached<PosMenu[]>('pos_menus') ?? []
+}
 
 type Summary = {
   idx: number
@@ -55,6 +60,9 @@ type Summary = {
   uzuraCost: number
   profit: number
   memo: string
+  groups: number // J列：組数
+  people: number // K列：客数
+  actualCost: number // L列：実仕入れ
 }
 type SaleRec = { date: string; menu: string; qty: number; subtotal: number }
 
@@ -69,6 +77,27 @@ const thisMonth = () => {
 const todayStr = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// 旧データ（localStorage）をフォールバック参照
+const actualCostOf = (s: Summary) =>
+  s.actualCost > 0 ? s.actualCost : getEventData(s.date).cost ?? 0
+const groupsOf = (s: Summary) =>
+  s.groups > 0 ? s.groups : getEventData(s.date).groups ?? 0
+const peopleOf = (s: Summary) => {
+  if (s.people > 0) return s.people
+  const ev = getEventData(s.date)
+  if (ev.people != null && ev.people > 0) return ev.people
+  return groupsOf(s) // 客数が無ければ組数で代用
+}
+
+// メニューエンジニアリング4象限のランク表示
+type Rank = 'star' | 'plow' | 'puzzle' | 'dog'
+const RANK_META: Record<Rank, { label: string; cls: string }> = {
+  star: { label: '看板', cls: 'bg-green-100 text-green-700' },
+  plow: { label: '集客', cls: 'bg-amber-100 text-amber-800' },
+  puzzle: { label: '隠れ', cls: 'bg-stone-200 text-stone-700' },
+  dog: { label: '見直し', cls: 'bg-red-100 text-red-600' },
 }
 
 export default function DashboardPage() {
@@ -95,10 +124,14 @@ export default function DashboardPage() {
     memo: '',
     toriokiN: '',
     toriokiRecipe: '',
+    groups: '',
+    people: '',
+    actualCost: '',
   })
   const [recipeNames, setRecipeNames] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [confirmTarget, setConfirmTarget] = useState<Summary | null>(null)
+  const migratedRef = useRef(false)
 
   // メニュー別（営業記録）の編集
   const [menuEditId, setMenuEditId] = useState<string | null>(null)
@@ -129,16 +162,60 @@ export default function DashboardPage() {
     [logout],
   )
 
+  // 旧localStorageの組数/客数/実仕入れを、空のJ/K/L列へ自動移行（1回のみ・冪等）
+  const migrateLocal = useCallback(
+    async (rawRows: string[][]) => {
+      if (!token || migratedRef.current) return
+      const writes: { row: number; vals: (number | string)[] }[] = []
+      rawRows.forEach((r, i) => {
+        const date = (r[0] ?? '').trim()
+        if (!date) return
+        const gBlank = (r[9] ?? '').trim() === ''
+        const pBlank = (r[10] ?? '').trim() === ''
+        const cBlank = (r[11] ?? '').trim() === ''
+        if (!gBlank && !pBlank && !cBlank) return
+        const ev = getEventData(date)
+        const fills =
+          (gBlank && ev.groups != null) ||
+          (pBlank && ev.people != null) ||
+          (cBlank && ev.cost != null)
+        if (!fills) return
+        writes.push({
+          row: i + 2,
+          vals: [
+            gBlank ? ev.groups ?? '' : Number(r[9]) || 0,
+            pBlank ? ev.people ?? '' : Number(r[10]) || 0,
+            cBlank ? ev.cost ?? '' : Number(r[11]) || 0,
+          ],
+        })
+      })
+      if (writes.length === 0) return
+      migratedRef.current = true
+      try {
+        for (const w of writes) {
+          await updateValues(token, `営業サマリー!J${w.row}:L${w.row}`, [w.vals])
+        }
+        clearCache('dash_summaries')
+        await load(true)
+      } catch {
+        /* 移行失敗は致命的でない（次回再試行） */
+        migratedRef.current = false
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [token],
+  )
+
   const load = useCallback(async (silent = false) => {
     if (!token) return
     if (!silent) setLoading(true)
     setError(null)
     try {
       const [sum, rec] = await Promise.all([
-        readRange(token, '営業サマリー!A2:I'),
+        readRange(token, '営業サマリー!A2:L'),
         readRange(token, '営業記録!A2:E'),
       ])
-      const newSummaries = sum
+      const newSummaries: Summary[] = sum
         .map((r, i) => ({ r, i }))
         .filter(({ r }) => (r[0] ?? '').trim())
         .map(({ r, i }) => ({
@@ -151,6 +228,9 @@ export default function DashboardPage() {
           memo: (r[6] ?? '').trim(),
           otherCost: Number(r[7]) || 0,
           uzuraCost: Number(r[8]) || 0,
+          groups: Number(r[9]) || 0,
+          people: Number(r[10]) || 0,
+          actualCost: Number(r[11]) || 0,
         }))
       // 営業履歴（営業サマリー）に存在する日付のものだけを商品別集計の対象にする
       const validDates = new Set(newSummaries.map((s) => s.date))
@@ -176,12 +256,14 @@ export default function DashboardPage() {
       setRecords(newRecords)
       setCached('dash_summaries', newSummaries)
       setCached('dash_records', newRecords)
+      // 初回のみ：ローカルデータをシートへ自動移行（内部で1回ガード）
+      migrateLocal(sum)
     } catch (e) {
       if (!silent) handleAuthError(e)
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [token, handleAuthError])
+  }, [token, handleAuthError, migrateLocal])
 
   useEffect(() => {
     const hasCached =
@@ -219,6 +301,9 @@ export default function DashboardPage() {
       memo: s.memo,
       toriokiN: countGuess,
       toriokiRecipe: s.uzuraCost > 0 ? savedRecipe : '',
+      groups: groupsOf(s) > 0 ? String(groupsOf(s)) : '',
+      people: peopleOf(s) > 0 ? String(peopleOf(s)) : '',
+      actualCost: actualCostOf(s) > 0 ? String(actualCostOf(s)) : '',
     })
   }
 
@@ -229,6 +314,7 @@ export default function DashboardPage() {
     setEdit({
       date: todayStr(), sales: '', foodCost: '', locationFee: '5000',
       otherCost: '', memo: '', toriokiN: '', toriokiRecipe: '',
+      groups: '', people: '', actualCost: '',
     })
   }
 
@@ -244,15 +330,18 @@ export default function DashboardPage() {
       const uzura = calcUzuraCost(edit.toriokiN, edit.toriokiRecipe)
       const profit = sales - foodCost - fee - other - uzura
       const rate = sales > 0 ? Math.round((foodCost / sales) * 1000) / 10 : 0
+      const groups = Number(edit.groups) || 0
+      const people = Number(edit.people) || 0
+      const actual = Number(edit.actualCost) || 0
+      const rowVals = [
+        edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, uzura,
+        groups, people, actual,
+      ]
       if (s) {
         const row = s.idx + 2 // A2 が先頭データ行
-        await updateValues(token, `営業サマリー!A${row}:I${row}`, [
-          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, uzura],
-        ])
+        await updateValues(token, `営業サマリー!A${row}:L${row}`, [rowVals])
       } else {
-        await appendRows(token, '営業サマリー!A:I', [
-          [edit.date, sales, foodCost, fee, profit, rate, edit.memo, other, uzura],
-        ])
+        await appendRows(token, '営業サマリー!A:L', [rowVals])
       }
       setEditId(null)
       clearCache('dash_summaries')
@@ -340,20 +429,22 @@ export default function DashboardPage() {
     }
   }
 
-  // 集計
+  // ── 集計（今月） ──
   const tm = thisMonth()
   const tmSummaries = summaries.filter((s) => monthOf(s.date) === tm)
   const tmSales = tmSummaries.reduce((a, s) => a + s.sales, 0)
   const tmProfit = tmSummaries.reduce((a, s) => a + s.profit, 0)
   const tmFoodCost = tmSummaries.reduce((a, s) => a + s.foodCost, 0)
   const tmRate = tmSales > 0 ? (tmFoodCost / tmSales) * 100 : null
+  const tmPeople = tmSummaries.reduce((a, s) => a + peopleOf(s), 0)
+  const avgTicket = tmPeople > 0 ? tmSales / tmPeople : null
   const totalSales = summaries.reduce((a, s) => a + s.sales, 0)
 
-  // 月別売上
-  const byMonth: Record<string, number> = {}
-  for (const s of summaries) byMonth[monthOf(s.date)] = (byMonth[monthOf(s.date)] ?? 0) + s.sales
-  const months = Object.entries(byMonth).sort((a, b) => a[0].localeCompare(b[0]))
-  const monthMax = Math.max(1, ...months.map(([, v]) => v))
+  // 月次 原価チェック（理論 vs 実仕入れ）
+  const tmActual = tmSummaries.reduce((a, s) => a + actualCostOf(s), 0)
+  const tmMissingActual = tmSummaries.some((s) => actualCostOf(s) <= 0)
+  const costDiff = tmActual - tmFoodCost
+  const costDiffRate = tmFoodCost > 0 ? (costDiff / tmFoodCost) * 100 : null
 
   // 営業（新しい順：日付の降順、同日は入力が新しいものを上に）
   const sessions = [...summaries].sort(
@@ -372,12 +463,6 @@ export default function DashboardPage() {
     d[r.menu].qty += r.qty
     d[r.menu].amount += r.subtotal
   }
-
-  // メニュー別販売数
-  const byMenu: Record<string, number> = {}
-  for (const r of records) byMenu[r.menu] = (byMenu[r.menu] ?? 0) + r.qty
-  const menus = Object.entries(byMenu).sort((a, b) => b[1] - a[1]).slice(0, 10)
-  const menuMax = Math.max(1, ...menus.map(([, v]) => v))
 
   // ── 商品別タブ用 ──
   const eventDates = [...new Set(sessions.map((s) => s.date))] // unique dates, desc
@@ -399,11 +484,35 @@ export default function DashboardPage() {
   const totalQty = productStats.reduce((s, p) => s + p.qty, 0)
   const totalAmount = productStats.reduce((s, p) => s + p.amount, 0)
 
+  // メニューエンジニアリング（人気度＝販売数 × 収益性＝1食利益率）で4象限分類
+  const productRanked = (() => {
+    const { ctx } = getRecipeCtx()
+    const pos = getPosMenus()
+    const priceOf: Record<string, number> = {}
+    const recipeOf: Record<string, string> = {}
+    for (const m of pos) { priceOf[m.name] = m.price; recipeOf[m.name] = m.recipe }
+    const items = productStats.map((p) => {
+      const price = priceOf[p.name] ?? (p.qty > 0 ? Math.round(p.amount / p.qty) : 0)
+      const cost = ctx ? perServingCost(recipeOf[p.name] ?? '', ctx) : 0
+      const margin = price > 0 ? (price - cost) / price : 0
+      const costRate = price > 0 ? (cost / price) * 100 : null
+      return { ...p, price, cost, margin, costRate }
+    })
+    const avgQty = items.length ? items.reduce((s, x) => s + x.qty, 0) / items.length : 0
+    const avgMargin = items.length ? items.reduce((s, x) => s + x.margin, 0) / items.length : 0
+    return items.map((x) => {
+      const pop = x.qty >= avgQty
+      const prof = x.margin >= avgMargin
+      const rank: Rank = pop && prof ? 'star' : pop && !prof ? 'plow' : !pop && prof ? 'puzzle' : 'dog'
+      return { ...x, rank }
+    })
+  })()
+  const hasCostData = productRanked.some((p) => p.costRate != null)
+
   // ── 仕込み計算タブ用 ──
   const target = Math.max(0, parseInt(targetInput) || 0)
   const prepCalc = (() => {
     if (eventDates.length === 0) return null
-    // 各イベント日の組数（eventDataから）と商品別数量（recordsから）
     const evts = eventDates.map((date) => ({
       date,
       groups: getEventData(date).groups ?? null,
@@ -505,38 +614,60 @@ export default function DashboardPage() {
           </div>
 
           {dashTab === 'summary' && <>
-          {/* KPI */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-5">
-            <Kpi label={`今月の売上（${tm}）`} value={yen(tmSales)} />
-            <Kpi label="今月の利益" value={yen(tmProfit)} accent />
-            <Kpi
-              label="今月の原価率"
-              value={tmRate != null ? `${tmRate.toFixed(1)}%` : '—'}
-            />
-            <Kpi label="累計売上" value={yen(totalSales)} />
+          {/* ① 今月ヒーロー */}
+          <div className="rounded-2xl border border-stone-200 bg-gradient-to-b from-stone-50 to-white p-5 mb-4">
+            <p className="text-xs text-stone-500 mb-0.5">{tm.replace('-', '年')}月の利益</p>
+            <p className="text-4xl font-extrabold text-green-700 leading-tight">{yen(tmProfit)}</p>
+            <div className="grid grid-cols-3 gap-3 mt-4">
+              <HeroStat label="売上" value={yen(tmSales)} />
+              <HeroStat label="原価率" value={tmRate != null ? `${tmRate.toFixed(1)}%` : '—'} accent />
+              <HeroStat label="客単価" value={avgTicket != null ? yen(avgTicket) : '—'} />
+            </div>
+            <p className="text-xs text-stone-400 mt-3">累計売上 {yen(totalSales)}</p>
           </div>
 
-          {/* 月別売上 */}
-          {months.length > 0 && (
-            <Section title="月別売上">
-              <div className="flex items-end gap-2 h-32">
-                {months.map(([mn, v]) => (
-                  <div key={mn} className="flex-1 flex flex-col items-center justify-end">
-                    <span className="text-xs text-stone-500 mb-1">
-                      {Math.round(v / 1000)}k
-                    </span>
-                    <div
-                      className="w-full bg-amber-500 rounded-t"
-                      style={{ height: `${(v / monthMax) * 100}%` }}
-                    />
-                    <span className="text-xs text-stone-400 mt-1">{mn.slice(5)}</span>
+          {/* ② 月次 原価チェック（理論 vs 実仕入れ） */}
+          {(tmFoodCost > 0 || tmActual > 0) && (
+            <Section title="今月の原価チェック">
+              <div className="rounded-2xl border border-stone-200 p-4">
+                <div className="grid grid-cols-2 gap-3 mb-2">
+                  <div>
+                    <p className="text-xs text-stone-500">理論原価（レシピ）</p>
+                    <p className="text-lg font-bold text-stone-900">{yen(tmFoodCost)}</p>
                   </div>
-                ))}
+                  <div>
+                    <p className="text-xs text-stone-500">実仕入れ（実費）</p>
+                    <p className="text-lg font-bold text-stone-900">
+                      {tmActual > 0 ? yen(tmActual) : '—'}
+                    </p>
+                  </div>
+                </div>
+                {tmActual > 0 && (
+                  <div className="flex items-center justify-between border-t border-stone-100 pt-2">
+                    <span className="text-sm text-stone-500">差額（実仕入れ − 理論）</span>
+                    <span className={`font-bold ${costDiff > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                      {costDiff >= 0 ? '+' : '−'}{yen(Math.abs(costDiff))}
+                      {costDiffRate != null && (
+                        <span className="text-xs ml-1 text-stone-400">
+                          ({costDiff >= 0 ? '+' : '−'}{Math.abs(costDiffRate).toFixed(0)}%)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
+                <p className="text-xs text-stone-400 mt-2 leading-relaxed">
+                  {tmActual <= 0
+                    ? 'レジの締めで「仕入れ実費」を入力すると、理論原価との差を確認できます。'
+                    : costDiff > 0
+                      ? 'プラス＝ロス・廃棄・まとめ買いの在庫増の可能性。米のまとめ買いはここで吸収されます。'
+                      : 'マイナス＝在庫の取り崩し（前回までの仕入れを今月消費）。'}
+                  {tmMissingActual && tmActual > 0 && ' ※実費未入力の営業があります。'}
+                </p>
               </div>
             </Section>
           )}
 
-          {/* 売上・利益の推移（折れ線） */}
+          {/* ③ 売上・利益の推移（折れ線1枚） */}
           {last8.length > 0 && (
             <Section title="売上・利益の推移（直近8回）">
               <LineChart
@@ -557,334 +688,254 @@ export default function DashboardPage() {
             </Section>
           )}
 
-          {/* 営業履歴（各回タップで詳細） */}
-          {(sessions.length > 0 || true) && (
-            <Section title="営業履歴（タップで詳細）" extra={
-              <button
-                onClick={startNew}
-                className="text-xs bg-amber-700 text-[#faf9f5] px-2.5 py-1 rounded-lg font-semibold active:opacity-80"
-              >
-                ＋ 新規追加
-              </button>
-            }>
-              <div className="space-y-2">
-                {editId === 'new' && (
-                  <div className="border border-amber-300 rounded-xl px-3 pb-3 pt-2 text-sm space-y-2 bg-amber-50/40">
-                    <p className="font-semibold text-amber-800 text-xs">新規追加</p>
-                    <div>
-                      <label className="block text-xs text-stone-500 mb-1">日付</label>
-                      <input
-                        type="date"
-                        value={edit.date}
-                        onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
-                        className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <EditField label="売上" value={edit.sales} onChange={(v) => setEdit((e) => ({ ...e, sales: v }))} />
-                      <EditField label="食材原価" value={edit.foodCost} onChange={(v) => setEdit((e) => ({ ...e, foodCost: v }))} />
-                      <EditField label="場所代" value={edit.locationFee} onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))} />
-                      <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
-                    </div>
-                    <ToriokiEditFields
-                      countStr={edit.toriokiN}
-                      recipe={edit.toriokiRecipe}
-                      names={recipeNames}
-                      onCount={(v) => setEdit((e) => ({ ...e, toriokiN: v }))}
-                      onRecipe={(v) => setEdit((e) => ({ ...e, toriokiRecipe: v }))}
+          {/* ④ 営業履歴（カード一覧／タップで詳細） */}
+          <Section title="営業履歴" extra={
+            <button
+              onClick={startNew}
+              className="text-xs bg-amber-700 text-[#faf9f5] px-2.5 py-1 rounded-lg font-semibold active:opacity-80"
+            >
+              ＋ 新規追加
+            </button>
+          }>
+            <div className="space-y-2">
+              {editId === 'new' && (
+                <div className="border border-amber-300 rounded-xl px-3 pb-3 pt-2 text-sm space-y-2 bg-amber-50/40">
+                  <p className="font-semibold text-amber-800 text-xs">新規追加</p>
+                  <div>
+                    <label className="block text-xs text-stone-500 mb-1">日付</label>
+                    <input
+                      type="date"
+                      value={edit.date}
+                      onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
+                      className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
                     />
-                    {calcUzuraCost(edit.toriokiN, edit.toriokiRecipe) > 0 && (
-                      <p className="text-xs text-stone-500">
-                        取り置き原価 −{yen(calcUzuraCost(edit.toriokiN, edit.toriokiRecipe))}（利益から差引）
-                      </p>
-                    )}
-                    <div>
-                      <label className="block text-xs text-stone-500 mb-1">メモ</label>
-                      <input
-                        type="text"
-                        value={edit.memo}
-                        onChange={(e) => setEdit((p) => ({ ...p, memo: e.target.value }))}
-                        className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
-                      />
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                      <button onClick={() => setEditId(null)} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold">
-                        キャンセル
-                      </button>
-                      <button onClick={() => saveEdit()} disabled={busy || !edit.date} className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50">
-                        {busy ? '保存中...' : '追加'}
-                      </button>
-                    </div>
                   </div>
-                )}
-                {sessions.map((s) => {
-                  const sid = `${s.date}#${s.idx}`
-                  const open = openId === sid
-                  const rate = s.sales > 0 ? (s.foodCost / s.sales) * 100 : null
-                  const menus = Object.entries(recByDate[s.date] ?? {}).sort(
-                    (a, b) => b[1].amount - a[1].amount,
-                  )
-                  return (
-                    <div key={sid} className="border border-stone-200 rounded-xl overflow-hidden">
-                      <button
-                        onClick={() => setOpenId(open ? null : sid)}
-                        className="w-full text-left px-3 py-2.5"
-                      >
-                        <div className="flex justify-between items-center text-sm mb-1">
-                          <span className="font-semibold text-stone-800">
-                            {open ? '▾' : '▸'} {s.date}
-                          </span>
-                          <span className="text-stone-600">
-                            売上 <b className="text-stone-900">{yen(s.sales)}</b>
-                            <span className="text-stone-300 mx-1">/</span>
-                            利益 <b className="text-green-700">{yen(s.profit)}</b>
-                          </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <EditField label="売上" value={edit.sales} onChange={(v) => setEdit((e) => ({ ...e, sales: v }))} />
+                    <EditField label="食材原価" value={edit.foodCost} onChange={(v) => setEdit((e) => ({ ...e, foodCost: v }))} />
+                    <EditField label="場所代" value={edit.locationFee} onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))} />
+                    <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
+                  </div>
+                  <SalesExtraFields
+                    groups={edit.groups} people={edit.people} actualCost={edit.actualCost}
+                    onG={(v) => setEdit((e) => ({ ...e, groups: v }))}
+                    onP={(v) => setEdit((e) => ({ ...e, people: v }))}
+                    onC={(v) => setEdit((e) => ({ ...e, actualCost: v }))}
+                  />
+                  <ToriokiEditFields
+                    countStr={edit.toriokiN}
+                    recipe={edit.toriokiRecipe}
+                    names={recipeNames}
+                    onCount={(v) => setEdit((e) => ({ ...e, toriokiN: v }))}
+                    onRecipe={(v) => setEdit((e) => ({ ...e, toriokiRecipe: v }))}
+                  />
+                  {calcUzuraCost(edit.toriokiN, edit.toriokiRecipe) > 0 && (
+                    <p className="text-xs text-stone-500">
+                      取り置き原価 −{yen(calcUzuraCost(edit.toriokiN, edit.toriokiRecipe))}（利益から差引）
+                    </p>
+                  )}
+                  <div>
+                    <label className="block text-xs text-stone-500 mb-1">メモ</label>
+                    <input
+                      type="text"
+                      value={edit.memo}
+                      onChange={(e) => setEdit((p) => ({ ...p, memo: e.target.value }))}
+                      className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => setEditId(null)} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold">
+                      キャンセル
+                    </button>
+                    <button onClick={() => saveEdit()} disabled={busy || !edit.date} className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50">
+                      {busy ? '保存中...' : '追加'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {sessions.map((s) => {
+                const sid = `${s.date}#${s.idx}`
+                const open = openId === sid
+                const rate = s.sales > 0 ? (s.foodCost / s.sales) * 100 : null
+                const ppl = peopleOf(s)
+                const menus = Object.entries(recByDate[s.date] ?? {}).sort(
+                  (a, b) => b[1].amount - a[1].amount,
+                )
+                return (
+                  <div key={sid} className="border border-stone-200 rounded-xl overflow-hidden bg-white">
+                    <button
+                      onClick={() => setOpenId(open ? null : sid)}
+                      className="w-full text-left px-3.5 py-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold text-stone-800 w-16 shrink-0">
+                          {s.date.slice(5).replace('-', '/')}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between text-xs text-stone-500 mb-1">
+                            <span>売上 <b className="text-stone-900">{yen(s.sales)}</b></span>
+                            <span>利益 <b className="text-green-700">{yen(s.profit)}</b></span>
+                          </div>
+                          <div className="h-1.5 bg-stone-100 rounded overflow-hidden">
+                            <div
+                              className="h-full bg-amber-500"
+                              style={{ width: `${(s.sales / recentMax) * 100}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-2 bg-stone-100 rounded overflow-hidden">
-                          <div
-                            className="h-full bg-amber-500"
-                            style={{ width: `${(s.sales / recentMax) * 100}%` }}
+                        <span className="text-stone-400 shrink-0">{open ? '▾' : '▸'}</span>
+                      </div>
+                    </button>
+
+                    {open && editId === sid && (
+                      <div className="px-3 pb-3 pt-2 border-t border-stone-100 text-sm space-y-2">
+                        <div>
+                          <label className="block text-xs text-stone-500 mb-1">日付</label>
+                          <input
+                            type="date"
+                            value={edit.date}
+                            onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
+                            className="w-full border border-stone-300 rounded-lg px-3 py-2"
                           />
                         </div>
-                      </button>
-
-                      {open && editId === sid && (
-                        <div className="px-3 pb-3 pt-2 border-t border-stone-100 text-sm space-y-2">
-                          <div>
-                            <label className="block text-xs text-stone-500 mb-1">日付</label>
-                            <input
-                              type="date"
-                              value={edit.date}
-                              onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
-                              className="w-full border border-stone-300 rounded-lg px-3 py-2"
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <EditField
-                              label="売上"
-                              value={edit.sales}
-                              onChange={(v) => setEdit((e) => ({ ...e, sales: v }))}
-                            />
-                            <EditField
-                              label="食材原価"
-                              value={edit.foodCost}
-                              onChange={(v) => setEdit((e) => ({ ...e, foodCost: v }))}
-                            />
-                            <EditField
-                              label="場所代"
-                              value={edit.locationFee}
-                              onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))}
-                            />
-                            <EditField
-                              label="その他経費"
-                              value={edit.otherCost}
-                              onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))}
-                            />
-                          </div>
-                          <ToriokiEditFields
-                            countStr={edit.toriokiN}
-                            recipe={edit.toriokiRecipe}
-                            names={recipeNames}
-                            onCount={(v) => setEdit((e) => ({ ...e, toriokiN: v }))}
-                            onRecipe={(v) => setEdit((e) => ({ ...e, toriokiRecipe: v }))}
-                          />
-                          <div>
-                            <label className="block text-xs text-stone-500 mb-1">メモ</label>
-                            <input
-                              type="text"
-                              value={edit.memo}
-                              onChange={(e) =>
-                                setEdit((p) => ({ ...p, memo: e.target.value }))
-                              }
-                              className="w-full border border-stone-300 rounded-lg px-3 py-2"
-                            />
-                          </div>
-                          <p className="text-xs text-stone-400">
-                            利益 = 売上 − 食材原価 − 場所代 − その他経費 − 取り置き原価
-                            {calcUzuraCost(edit.toriokiN, edit.toriokiRecipe) > 0 &&
-                              `（取り置き −${yen(calcUzuraCost(edit.toriokiN, edit.toriokiRecipe))}）`}
-                          </p>
-                          <div className="flex gap-2 pt-1">
-                            <button
-                              onClick={() => setEditId(null)}
-                              disabled={busy}
-                              className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold"
-                            >
-                              キャンセル
-                            </button>
-                            <button
-                              onClick={() => saveEdit(s)}
-                              disabled={busy}
-                              className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50"
-                            >
-                              {busy ? '保存中...' : '保存'}
-                            </button>
-                          </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <EditField label="売上" value={edit.sales} onChange={(v) => setEdit((e) => ({ ...e, sales: v }))} />
+                          <EditField label="食材原価" value={edit.foodCost} onChange={(v) => setEdit((e) => ({ ...e, foodCost: v }))} />
+                          <EditField label="場所代" value={edit.locationFee} onChange={(v) => setEdit((e) => ({ ...e, locationFee: v }))} />
+                          <EditField label="その他経費" value={edit.otherCost} onChange={(v) => setEdit((e) => ({ ...e, otherCost: v }))} />
                         </div>
-                      )}
+                        <SalesExtraFields
+                          groups={edit.groups} people={edit.people} actualCost={edit.actualCost}
+                          onG={(v) => setEdit((e) => ({ ...e, groups: v }))}
+                          onP={(v) => setEdit((e) => ({ ...e, people: v }))}
+                          onC={(v) => setEdit((e) => ({ ...e, actualCost: v }))}
+                        />
+                        <ToriokiEditFields
+                          countStr={edit.toriokiN}
+                          recipe={edit.toriokiRecipe}
+                          names={recipeNames}
+                          onCount={(v) => setEdit((e) => ({ ...e, toriokiN: v }))}
+                          onRecipe={(v) => setEdit((e) => ({ ...e, toriokiRecipe: v }))}
+                        />
+                        <div>
+                          <label className="block text-xs text-stone-500 mb-1">メモ</label>
+                          <input
+                            type="text"
+                            value={edit.memo}
+                            onChange={(e) => setEdit((p) => ({ ...p, memo: e.target.value }))}
+                            className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                          />
+                        </div>
+                        <p className="text-xs text-stone-400">
+                          利益 = 売上 − 食材原価 − 場所代 − その他経費 − 取り置き原価
+                          {calcUzuraCost(edit.toriokiN, edit.toriokiRecipe) > 0 &&
+                            `（取り置き −${yen(calcUzuraCost(edit.toriokiN, edit.toriokiRecipe))}）`}
+                        </p>
+                        <div className="flex gap-2 pt-1">
+                          <button onClick={() => setEditId(null)} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold">
+                            キャンセル
+                          </button>
+                          <button onClick={() => saveEdit(s)} disabled={busy} className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50">
+                            {busy ? '保存中...' : '保存'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
-                      {open && editId !== sid && (
-                        <div className="px-3 pb-3 pt-1 border-t border-stone-100 text-sm">
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 my-2">
-                            <Row label="売上" value={yen(s.sales)} />
-                            <Row label="食材原価" value={yen(s.foodCost)} />
-                            <Row label="場所代" value={yen(s.locationFee)} />
-                            {s.otherCost > 0 && (
-                              <Row label="その他経費" value={yen(s.otherCost)} />
-                            )}
-                            {s.uzuraCost > 0 && (
-                              <Row label="取り置き原価" value={yen(s.uzuraCost)} />
-                            )}
-                            <Row label="利益" value={yen(s.profit)} accent />
-                            <Row
-                              label="原価率"
-                              value={rate != null ? `${rate.toFixed(1)}%` : '—'}
-                            />
-                          </div>
-                          {(() => {
-                            const ev = getEventData(s.date)
-                            if (!ev.cost && !ev.groups) return null
-                            const grossProfit = ev.cost != null ? s.sales - ev.cost : null
-                            const costRate = ev.cost != null && s.sales > 0
-                              ? Math.round((ev.cost / s.sales) * 100) : null
-                            return (
-                              <div className="bg-amber-50/60 border border-amber-200 rounded-lg px-3 py-2 mb-2 text-xs space-y-0.5">
-                                <p className="font-semibold text-amber-800 mb-1">仕入れ実費</p>
-                                {ev.groups != null && <Row label="組数" value={`${ev.groups} 組`} />}
-                                {ev.cost != null && ev.cost > 0 && (
-                                  <>
-                                    <Row label="仕入れ" value={yen(ev.cost)} />
-                                    {grossProfit != null && <Row label="粗利" value={yen(grossProfit)} accent={grossProfit >= 0} />}
-                                    {costRate != null && <Row label="原価率" value={`${costRate}%`} />}
-                                  </>
-                                )}
+                    {open && editId !== sid && (
+                      <div className="px-3 pb-3 pt-1 border-t border-stone-100 text-sm">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 my-2">
+                          <Row label="売上" value={yen(s.sales)} />
+                          <Row label="食材原価" value={yen(s.foodCost)} />
+                          <Row label="場所代" value={yen(s.locationFee)} />
+                          {s.otherCost > 0 && <Row label="その他経費" value={yen(s.otherCost)} />}
+                          {s.uzuraCost > 0 && <Row label="取り置き原価" value={yen(s.uzuraCost)} />}
+                          <Row label="利益" value={yen(s.profit)} accent />
+                          <Row label="原価率" value={rate != null ? `${rate.toFixed(1)}%` : '—'} />
+                          {groupsOf(s) > 0 && <Row label="組数 / 客数" value={`${groupsOf(s)}組 / ${ppl}人`} />}
+                          {ppl > 0 && <Row label="客単価" value={yen(s.sales / ppl)} />}
+                          {actualCostOf(s) > 0 && <Row label="実仕入れ" value={yen(actualCostOf(s))} />}
+                        </div>
+                        {s.memo && <p className="text-stone-500 mb-2">メモ: {s.memo}</p>}
+                        {menuEditId === sid ? (
+                          <div className="bg-stone-50 rounded-lg p-2 mb-2 space-y-1.5">
+                            <p className="text-xs text-stone-400">メニュー別の数を編集</p>
+                            {menuEdit.map((m, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="flex-1 truncate text-stone-700">{m.menu}</span>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  value={m.qty}
+                                  onChange={(e) =>
+                                    setMenuEdit((arr) =>
+                                      arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)),
+                                    )
+                                  }
+                                  className="w-16 border border-stone-300 rounded-lg px-2 py-1 text-right bg-white"
+                                />
+                                <span className="text-xs text-stone-400">食</span>
+                                <button
+                                  onClick={() => setMenuEdit((arr) => arr.filter((_, j) => j !== i))}
+                                  className="text-red-400 px-1"
+                                  title="削除"
+                                >
+                                  🗑️
+                                </button>
                               </div>
-                            )
-                          })()}
-                          {s.memo && (
-                            <p className="text-stone-500 mb-2">メモ: {s.memo}</p>
-                          )}
-                          {menuEditId === sid ? (
-                            <div className="bg-stone-50 rounded-lg p-2 mb-2 space-y-1.5">
-                              <p className="text-xs text-stone-400">メニュー別の数を編集</p>
-                              {menuEdit.map((m, i) => (
-                                <div key={i} className="flex items-center gap-2">
-                                  <span className="flex-1 truncate text-stone-700">{m.menu}</span>
-                                  <input
-                                    type="number"
-                                    inputMode="numeric"
-                                    value={m.qty}
-                                    onChange={(e) =>
-                                      setMenuEdit((arr) =>
-                                        arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)),
-                                      )
-                                    }
-                                    className="w-16 border border-stone-300 rounded-lg px-2 py-1 text-right bg-white"
-                                  />
-                                  <span className="text-xs text-stone-400">食</span>
-                                  <button
-                                    onClick={() =>
-                                      setMenuEdit((arr) => arr.filter((_, j) => j !== i))
-                                    }
-                                    className="text-red-400 px-1"
-                                    title="削除"
-                                  >
-                                    🗑️
-                                  </button>
+                            ))}
+                            {menuEdit.length === 0 && (
+                              <p className="text-xs text-stone-400 py-1">記録がありません</p>
+                            )}
+                            <div className="flex gap-2 pt-1">
+                              <button onClick={() => setMenuEditId(null)} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold text-sm">
+                                キャンセル
+                              </button>
+                              <button onClick={() => saveMenuEdit(s.date)} disabled={busy} className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50 text-sm">
+                                {busy ? '保存中...' : '保存'}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          menus.length > 0 && (
+                            <div className="bg-stone-50 rounded-lg p-2 mb-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-xs text-stone-400">メニュー別</p>
+                                <button
+                                  onClick={() => startMenuEdit(s.date, sid)}
+                                  className="text-xs text-amber-700 font-semibold active:opacity-70"
+                                >
+                                  ✏️ 数を編集
+                                </button>
+                              </div>
+                              {menus.map(([mn, v]) => (
+                                <div key={mn} className="flex justify-between py-0.5 text-stone-700">
+                                  <span className="truncate">
+                                    {mn} <span className="text-stone-400">×{v.qty}</span>
+                                  </span>
+                                  <span className="font-medium text-stone-800 shrink-0 ml-2">
+                                    {yen(v.amount)}
+                                  </span>
                                 </div>
                               ))}
-                              {menuEdit.length === 0 && (
-                                <p className="text-xs text-stone-400 py-1">記録がありません</p>
-                              )}
-                              <div className="flex gap-2 pt-1">
-                                <button
-                                  onClick={() => setMenuEditId(null)}
-                                  disabled={busy}
-                                  className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold text-sm"
-                                >
-                                  キャンセル
-                                </button>
-                                <button
-                                  onClick={() => saveMenuEdit(s.date)}
-                                  disabled={busy}
-                                  className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50 text-sm"
-                                >
-                                  {busy ? '保存中...' : '保存'}
-                                </button>
-                              </div>
                             </div>
-                          ) : (
-                            menus.length > 0 && (
-                              <div className="bg-stone-50 rounded-lg p-2 mb-2">
-                                <div className="flex items-center justify-between mb-1">
-                                  <p className="text-xs text-stone-400">メニュー別</p>
-                                  <button
-                                    onClick={() => startMenuEdit(s.date, sid)}
-                                    className="text-xs text-amber-700 font-semibold active:opacity-70"
-                                  >
-                                    ✏️ 数を編集
-                                  </button>
-                                </div>
-                                {menus.map(([mn, v]) => (
-                                  <div
-                                    key={mn}
-                                    className="flex justify-between py-0.5 text-stone-700"
-                                  >
-                                    <span className="truncate">
-                                      {mn} <span className="text-stone-400">×{v.qty}</span>
-                                    </span>
-                                    <span className="font-medium text-stone-800 shrink-0 ml-2">
-                                      {yen(v.amount)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )
-                          )}
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => startEdit(s, sid)}
-                              disabled={busy}
-                              className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-700 font-semibold active:bg-stone-50"
-                            >
-                              ✏️ 編集
-                            </button>
-                            <button
-                              onClick={() => setConfirmTarget(s)}
-                              disabled={busy}
-                              className="flex-1 py-2 rounded-lg border border-red-200 text-red-600 font-semibold active:bg-red-50 disabled:opacity-50"
-                            >
-                              🗑️ 削除
-                            </button>
-                          </div>
+                          )
+                        )}
+                        <div className="flex gap-2">
+                          <button onClick={() => startEdit(s, sid)} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-700 font-semibold active:bg-stone-50">
+                            ✏️ 編集
+                          </button>
+                          <button onClick={() => setConfirmTarget(s)} disabled={busy} className="flex-1 py-2 rounded-lg border border-red-200 text-red-600 font-semibold active:bg-red-50 disabled:opacity-50">
+                            🗑️ 削除
+                          </button>
                         </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* メニュー別販売数 */}
-          {menus.length > 0 && (
-            <Section title="メニュー別 販売数">
-              <div className="space-y-1.5">
-                {menus.map(([mn, v]) => (
-                  <div key={mn} className="flex items-center gap-2 text-sm">
-                    <span className="w-28 truncate text-stone-700 shrink-0">{mn}</span>
-                    <div className="flex-1 h-4 bg-stone-100 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-amber-400"
-                        style={{ width: `${(v / menuMax) * 100}%` }}
-                      />
-                    </div>
-                    <span className="w-8 text-right font-semibold text-stone-700">{v}</span>
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            </Section>
-          )}
+                )
+              })}
+            </div>
+          </Section>
           </> /* end summary tab */}
 
           {/* ── 商品別タブ ── */}
@@ -905,49 +956,78 @@ export default function DashboardPage() {
                 ))}
               </div>
 
-              {productStats.length === 0 ? (
+              {productRanked.length === 0 ? (
                 <p className="text-center text-stone-400 text-sm py-8">データがありません</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-stone-200 text-stone-500 text-xs">
-                        <th className="text-left pb-2">商品名</th>
-                        <th className="text-right pb-2 pr-2">販売数</th>
-                        <th className="text-right pb-2 pr-2">売上</th>
-                        <th className="text-right pb-2">構成比</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {productStats.map((p) => (
-                        <tr key={p.name} className="border-b border-stone-100">
-                          <td className="py-2 pr-2 font-medium text-stone-800">{p.name}</td>
-                          <td className="py-2 pr-2 text-right text-stone-700">{p.qty}</td>
-                          <td className="py-2 pr-2 text-right text-stone-700">{yen(p.amount)}</td>
-                          <td className="py-2 text-right">
-                            <span className="text-stone-500">
-                              {totalAmount > 0 ? Math.round((p.amount / totalAmount) * 100) : 0}%
-                            </span>
-                            <div className="h-1.5 bg-stone-100 rounded mt-0.5">
-                              <div
-                                className="h-full bg-amber-500 rounded"
-                                style={{ width: `${totalAmount > 0 ? (p.amount / totalAmount) * 100 : 0}%` }}
-                              />
-                            </div>
-                          </td>
-                        </tr>
+                <>
+                  {/* ランク凡例（メニューエンジニアリング） */}
+                  {hasCostData && (
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {(['star', 'plow', 'puzzle', 'dog'] as Rank[]).map((r) => (
+                        <span key={r} className={`text-xs px-2 py-0.5 rounded-full font-semibold ${RANK_META[r].cls}`}>
+                          {RANK_META[r].label}
+                        </span>
                       ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-stone-300 font-semibold text-stone-800">
-                        <td className="pt-2">合計</td>
-                        <td className="pt-2 text-right pr-2">{totalQty}</td>
-                        <td className="pt-2 text-right pr-2">{yen(totalAmount)}</td>
-                        <td className="pt-2 text-right">100%</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                      <span className="text-xs text-stone-400 self-center ml-1">売れ筋×利益で分類</span>
+                    </div>
+                  )}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-stone-200 text-stone-500 text-xs">
+                          <th className="text-left pb-2">商品名</th>
+                          <th className="text-right pb-2 pr-2">販売数</th>
+                          <th className="text-right pb-2 pr-2">売上</th>
+                          {hasCostData && <th className="text-right pb-2 pr-2">原価率</th>}
+                          <th className="text-right pb-2">構成比</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {productRanked.map((p) => (
+                          <tr key={p.name} className="border-b border-stone-100">
+                            <td className="py-2 pr-2 font-medium text-stone-800">
+                              <div className="flex items-center gap-1.5">
+                                {hasCostData && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${RANK_META[p.rank].cls}`}>
+                                    {RANK_META[p.rank].label}
+                                  </span>
+                                )}
+                                <span className="truncate">{p.name}</span>
+                              </div>
+                            </td>
+                            <td className="py-2 pr-2 text-right text-stone-700">{p.qty}</td>
+                            <td className="py-2 pr-2 text-right text-stone-700">{yen(p.amount)}</td>
+                            {hasCostData && (
+                              <td className="py-2 pr-2 text-right text-stone-600">
+                                {p.costRate != null ? `${p.costRate.toFixed(0)}%` : '—'}
+                              </td>
+                            )}
+                            <td className="py-2 text-right">
+                              <span className="text-stone-500">
+                                {totalAmount > 0 ? Math.round((p.amount / totalAmount) * 100) : 0}%
+                              </span>
+                              <div className="h-1.5 bg-stone-100 rounded mt-0.5">
+                                <div
+                                  className="h-full bg-amber-500 rounded"
+                                  style={{ width: `${totalAmount > 0 ? (p.amount / totalAmount) * 100 : 0}%` }}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-stone-300 font-semibold text-stone-800">
+                          <td className="pt-2">合計</td>
+                          <td className="pt-2 text-right pr-2">{totalQty}</td>
+                          <td className="pt-2 text-right pr-2">{yen(totalAmount)}</td>
+                          {hasCostData && <td />}
+                          <td className="pt-2 text-right">100%</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -1054,13 +1134,11 @@ export default function DashboardPage() {
   )
 }
 
-function Kpi({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function HeroStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className="border border-stone-200 rounded-xl p-3">
+    <div>
       <p className="text-xs text-stone-500">{label}</p>
-      <p className={`text-xl font-bold ${accent ? 'text-green-700' : 'text-stone-900'}`}>
-        {value}
-      </p>
+      <p className={`text-lg font-bold ${accent ? 'text-amber-800' : 'text-stone-900'}`}>{value}</p>
     </div>
   )
 }
@@ -1147,6 +1225,53 @@ function ToriokiEditFields({
           className="w-full border border-stone-300 rounded-lg px-3 py-2 text-right"
         />
       </div>
+    </div>
+  )
+}
+
+function SalesExtraFields({
+  groups,
+  people,
+  actualCost,
+  onG,
+  onP,
+  onC,
+}: {
+  groups: string
+  people: string
+  actualCost: string
+  onG: (v: string) => void
+  onP: (v: string) => void
+  onC: (v: string) => void
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <NumField label="組数" value={groups} onChange={onG} />
+      <NumField label="客数" value={people} onChange={onP} />
+      <NumField label="実仕入れ(円)" value={actualCost} onChange={onC} />
+    </div>
+  )
+}
+
+function NumField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-stone-500 mb-1">{label}</label>
+      <input
+        type="number"
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full border border-stone-300 rounded-lg px-2 py-2 text-right"
+      />
     </div>
   )
 }
