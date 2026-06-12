@@ -269,6 +269,14 @@ export default function DashboardPage() {
           people: Number(r[10]) || 0,
           actualCost: Number(r[11]) || 0,
         }))
+        // 締め直し・二重追加などで生じた同一内容の重複行を除外（履歴・累計の二重計上を防ぐ）
+        .filter((s, _i, arr) => {
+          const k = `${s.date}|${s.sales}|${s.foodCost}|${s.locationFee}|${s.profit}|${s.memo}|${s.groups}|${s.people}`
+          // 同じ署名で最初に現れた行(idx最小)だけを残す
+          return arr.find((x) =>
+            `${x.date}|${x.sales}|${x.foodCost}|${x.locationFee}|${x.profit}|${x.memo}|${x.groups}|${x.people}` === k,
+          ) === s
+        })
       // 営業履歴（営業サマリー）に存在する日付のものだけを商品別集計の対象にする
       const validDates = new Set(newSummaries.map((s) => s.date))
       // 締めを複数回行った等で生じる「同一日・同一メニュー・同一数量・同一金額」の
@@ -307,6 +315,11 @@ export default function DashboardPage() {
             amount: Number(r[3]) || 0,
             memo: (r[4] ?? '').trim(),
           }))
+          // 同一内容の重複行を除外（累計の二重計上を防ぐ）
+          .filter((e, _i, arr) => {
+            const k = `${e.date}|${e.category}|${e.content}|${e.amount}|${e.memo}`
+            return arr.find((x) => `${x.date}|${x.category}|${x.content}|${x.amount}|${x.memo}` === k) === e
+          })
         setExpenses(newExpenses)
         setCached('dash_expenses', newExpenses)
       } catch {
