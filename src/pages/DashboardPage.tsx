@@ -70,6 +70,22 @@ type SaleRec = { date: string; menu: string; qty: number; subtotal: number }
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`
 type DashTab = 'summary' | 'products' | 'prep' | 'expense'
 
+// サマリーの期間セレクタ
+type SumPeriod = 'month' | '4w' | '3m' | '6m' | '1y'
+const SUM_PERIODS: { key: SumPeriod; label: string; days: number | null }[] = [
+  { key: 'month', label: '今月', days: null },
+  { key: '4w', label: '過去4週', days: 28 },
+  { key: '3m', label: '過去3ヶ月', days: 90 },
+  { key: '6m', label: '過去半年', days: 180 },
+  { key: '1y', label: '過去1年', days: 365 },
+]
+// N日前のISO日付（YYYY-MM-DD）。ISO日付は文字列比較で大小一致
+function daysAgoStr(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() - days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 // 経費（イレギュラー出費）台帳
 type Expense = { idx: number; date: string; category: string; content: string; amount: number; memo: string }
 const EXPENSE_CATS = ['試作', '消耗品', '備品', '設備', 'その他'] as const
@@ -161,6 +177,7 @@ export default function DashboardPage() {
 
   const [dashTab, setDashTab] = usePersistedState<DashTab>('kbtr_view_dash_tab', 'summary')
   const [period, setPeriod] = usePersistedState<Period>('kbtr_view_dash_period', 'all')
+  const [sumPeriod, setSumPeriod] = usePersistedState<SumPeriod>('kbtr_view_dash_psel', 'month')
   const [targetInput, setTargetInput] = useState('')
   useKeyboardOffset()
 
@@ -522,18 +539,40 @@ export default function DashboardPage() {
     }
   }
 
-  // ── 集計（今月） ──
   const tm = thisMonth()
-  const tmSummaries = summaries.filter((s) => monthOf(s.date) === tm)
-  const tmSales = tmSummaries.reduce((a, s) => a + s.sales, 0)
-  const tmProfit = tmSummaries.reduce((a, s) => a + s.profit, 0)
-  const tmFoodCost = tmSummaries.reduce((a, s) => a + s.foodCost, 0)
-  const tmRate = tmSales > 0 ? (tmFoodCost / tmSales) * 100 : null
-  const tmPeople = tmSummaries.reduce((a, s) => a + peopleOf(s), 0)
-  const avgTicket = tmPeople > 0 ? tmSales / tmPeople : null
   const totalSales = summaries.reduce((a, s) => a + s.sales, 0)
 
-  // 経費（今月／累計／カテゴリ別）。今月利益から差し引く
+  // ── 期間判定 ──
+  const periodMeta = SUM_PERIODS.find((p) => p.key === sumPeriod) ?? SUM_PERIODS[0]
+  const cutoff = periodMeta.days != null ? daysAgoStr(periodMeta.days) : null
+  const inPeriod = (date: string) =>
+    cutoff != null ? date >= cutoff : monthOf(date) === tm
+
+  // ── 期間集計（実費ベースの実際利益＋推定利益） ──
+  const pSummaries = summaries.filter((s) => inPeriod(s.date))
+  const pSales = pSummaries.reduce((a, s) => a + s.sales, 0)
+  const pFee = pSummaries.reduce((a, s) => a + s.locationFee, 0)
+  const pOther = pSummaries.reduce((a, s) => a + s.otherCost, 0)
+  const pUzura = pSummaries.reduce((a, s) => a + s.uzuraCost, 0)
+  const pFoodCost = pSummaries.reduce((a, s) => a + s.foodCost, 0) // 理論
+  const pProfitEst = pSummaries.reduce((a, s) => a + s.profit, 0) // 推定（営業）利益
+  const pPeople = pSummaries.reduce((a, s) => a + peopleOf(s), 0)
+  // 実費の食材費：実仕入れ(L) があればそれ、無ければ理論原価で代用
+  const faOf = (s: Summary) => (actualCostOf(s) > 0 ? actualCostOf(s) : s.foodCost)
+  const pPurchase = pSummaries.reduce((a, s) => a + faOf(s), 0)
+  const usedTheoretical = pSummaries.some((s) => actualCostOf(s) <= 0 && s.foodCost > 0)
+  // 期間内の経費台帳
+  const pExpenses = expenses.filter((e) => inPeriod(e.date))
+  const pLedger = pExpenses.reduce((a, e) => a + e.amount, 0)
+  // 実際の利益（実費ベース）＝売上 −（場所代＋仕入れ＋その他＋取り置き＋経費）
+  const pActual = pSales - pFee - pPurchase - pOther - pUzura - pLedger
+  // 推定利益（原価計算ベース）－経費
+  const pEst = pProfitEst - pLedger
+  const pRate = pSales > 0 ? (pFoodCost / pSales) * 100 : null
+  const avgTicket = pPeople > 0 ? pSales / pPeople : null
+  const pCostTotal = pFee + pPurchase + pOther + pUzura + pLedger
+
+  // 経費（今月／累計／カテゴリ別）— 経費タブ用（今月固定）
   const tmExpenses = expenses.filter((e) => monthOf(e.date) === tm)
   const tmExp = tmExpenses.reduce((a, e) => a + e.amount, 0)
   const totalExp = expenses.reduce((a, e) => a + e.amount, 0)
@@ -541,14 +580,7 @@ export default function DashboardPage() {
     cat: c,
     amount: tmExpenses.filter((e) => e.category === c).reduce((a, e) => a + e.amount, 0),
   })).filter((x) => x.amount > 0)
-  const netProfit = tmProfit - tmExp // 今月の最終利益（営業利益 − 経費）
   const expSorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date) || b.idx - a.idx)
-
-  // 月次 原価チェック（理論 vs 実仕入れ）
-  const tmActual = tmSummaries.reduce((a, s) => a + actualCostOf(s), 0)
-  const tmMissingActual = tmSummaries.some((s) => actualCostOf(s) <= 0)
-  const costDiff = tmActual - tmFoodCost
-  const costDiffRate = tmFoodCost > 0 ? (costDiff / tmFoodCost) * 100 : null
 
   // 営業（新しい順：日付の降順、同日は入力が新しいものを上に）
   const sessions = [...summaries].sort(
@@ -718,60 +750,63 @@ export default function DashboardPage() {
           </div>
 
           {dashTab === 'summary' && <>
-          {/* ① 今月ヒーロー */}
+          {/* 期間セレクタ */}
+          <div className="flex gap-1.5 mb-3 overflow-x-auto">
+            {SUM_PERIODS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setSumPeriod(p.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 ${
+                  sumPeriod === p.key ? 'bg-amber-700 text-[#faf9f5]' : 'bg-stone-100 text-stone-600'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ① ヒーロー：実際の利益（実費ベース） */}
           <div className="rounded-2xl border border-stone-200 bg-gradient-to-b from-stone-50 to-white p-5 mb-4">
-            <p className="text-xs text-stone-500 mb-0.5">{tm.replace('-', '年')}月の利益</p>
-            <p className="text-4xl font-extrabold text-green-700 leading-tight">{yen(netProfit)}</p>
-            {tmExp > 0 && (
-              <p className="text-xs text-stone-400 mt-1">
-                営業利益 {yen(tmProfit)} − 経費 {yen(tmExp)}
-              </p>
-            )}
+            <p className="text-xs text-stone-500 mb-0.5">{periodMeta.label}の実際の利益（実費ベース）</p>
+            <p className={`text-4xl font-extrabold leading-tight ${pActual >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+              {yen(pActual)}
+            </p>
+            <p className="text-xs text-stone-400 mt-1">推定利益（原価計算）{yen(pEst)}</p>
             <div className="grid grid-cols-3 gap-3 mt-4">
-              <HeroStat label="売上" value={yen(tmSales)} />
-              <HeroStat label="原価率" value={tmRate != null ? `${tmRate.toFixed(1)}%` : '—'} accent />
+              <HeroStat label="売上" value={yen(pSales)} />
+              <HeroStat label="原価率" value={pRate != null ? `${pRate.toFixed(1)}%` : '—'} accent />
               <HeroStat label="客単価" value={avgTicket != null ? yen(avgTicket) : '—'} />
             </div>
             <p className="text-xs text-stone-400 mt-3">累計売上 {yen(totalSales)}</p>
           </div>
 
-          {/* ② 月次 原価チェック（理論 vs 実仕入れ） */}
-          {(tmFoodCost > 0 || tmActual > 0) && (
-            <Section title="今月の原価チェック">
-              <div className="rounded-2xl border border-stone-200 p-4">
-                <div className="grid grid-cols-2 gap-3 mb-2">
-                  <div>
-                    <p className="text-xs text-stone-500">理論原価（レシピ）</p>
-                    <p className="text-lg font-bold text-stone-900">{yen(tmFoodCost)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-stone-500">実仕入れ（実費）</p>
-                    <p className="text-lg font-bold text-stone-900">
-                      {tmActual > 0 ? yen(tmActual) : '—'}
-                    </p>
-                  </div>
+          {/* ② 実費の内訳 */}
+          {pSales > 0 && (
+            <Section title={`実費の内訳（${periodMeta.label}）`}>
+              <div className="rounded-2xl border border-stone-200 p-4 text-sm">
+                <div className="space-y-1.5">
+                  <Row label="売上" value={yen(pSales)} />
+                  <Row label="− 仕入れ（食材）" value={yen(pPurchase)} />
+                  <Row label="− 場所代" value={yen(pFee)} />
+                  {pOther > 0 && <Row label="− その他経費" value={yen(pOther)} />}
+                  {pUzura > 0 && <Row label="− 取り置き原価" value={yen(pUzura)} />}
+                  {pLedger > 0 && <Row label="− 経費（試作・備品など）" value={yen(pLedger)} />}
                 </div>
-                {tmActual > 0 && (
-                  <div className="flex items-center justify-between border-t border-stone-100 pt-2">
-                    <span className="text-sm text-stone-500">差額（実仕入れ − 理論）</span>
-                    <span className={`font-bold ${costDiff > 0 ? 'text-red-600' : 'text-green-700'}`}>
-                      {costDiff >= 0 ? '+' : '−'}{yen(Math.abs(costDiff))}
-                      {costDiffRate != null && (
-                        <span className="text-xs ml-1 text-stone-400">
-                          ({costDiff >= 0 ? '+' : '−'}{Math.abs(costDiffRate).toFixed(0)}%)
-                        </span>
-                      )}
-                    </span>
-                  </div>
+                <div className="flex items-center justify-between border-t border-stone-200 mt-2 pt-2">
+                  <span className="text-stone-500">実費合計</span>
+                  <span className="font-bold text-stone-900">{yen(pCostTotal)}</span>
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="font-semibold text-stone-700">実際の利益</span>
+                  <span className={`font-bold ${pActual >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                    {yen(pActual)}
+                  </span>
+                </div>
+                {usedTheoretical && (
+                  <p className="text-xs text-stone-400 mt-2">
+                    ※ 実仕入れ未入力の営業は理論原価で代用しています（レジの締めで実仕入れを入力すると正確になります）。
+                  </p>
                 )}
-                <p className="text-xs text-stone-400 mt-2 leading-relaxed">
-                  {tmActual <= 0
-                    ? 'レジの締めで「仕入れ実費」を入力すると、理論原価との差を確認できます。'
-                    : costDiff > 0
-                      ? 'プラス＝ロス・廃棄・まとめ買いの在庫増の可能性。米のまとめ買いはここで吸収されます。'
-                      : 'マイナス＝在庫の取り崩し（前回までの仕入れを今月消費）。'}
-                  {tmMissingActual && tmActual > 0 && ' ※実費未入力の営業があります。'}
-                </p>
               </div>
             </Section>
           )}
