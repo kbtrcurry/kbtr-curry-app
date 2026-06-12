@@ -549,7 +549,6 @@ export default function DashboardPage() {
   const pSales = pSummaries.reduce((a, s) => a + s.sales, 0)
   const pFee = pSummaries.reduce((a, s) => a + s.locationFee, 0)
   const pOther = pSummaries.reduce((a, s) => a + s.otherCost, 0)
-  const pUzura = pSummaries.reduce((a, s) => a + s.uzuraCost, 0)
   const pFoodCost = pSummaries.reduce((a, s) => a + s.foodCost, 0) // 理論（原価率の分析用）
   const pPeople = pSummaries.reduce((a, s) => a + peopleOf(s), 0)
   // 期間内の経費台帳。仕入れ（食材費）とそれ以外に分ける
@@ -563,11 +562,12 @@ export default function DashboardPage() {
   // 食材仕入れ＝経費タブの「仕入れ」のみ（旧L列の実仕入れは廃止につき集計しない）
   const pPurchase = pLedgerPurchaseNew
   const noPurchase = pPurchase <= 0 && pSales > 0 // 仕入れ未記録
-  // 実際の利益（実費ベース）＝売上 −（仕入れ＋場所代＋その他＋取り置き＋経費その他）
-  const pActual = pSales - pPurchase - pFee - pOther - pUzura - pLedgerOther
+  // 実際の利益（実費ベース）＝売上 −（仕入れ＋場所代＋その他＋経費その他）
+  // ※取り置き原価は理論側（推定利益）のみ。食材は仕入れに含まれるため実費では引かない
+  const pActual = pSales - pPurchase - pFee - pOther - pLedgerOther
   const pRate = pSales > 0 ? (pFoodCost / pSales) * 100 : null
   const avgTicket = pPeople > 0 ? pSales / pPeople : null
-  const pCostTotal = pPurchase + pFee + pOther + pUzura + pLedgerOther
+  const pCostTotal = pPurchase + pFee + pOther + pLedgerOther
 
   // 経費（今月／累計／カテゴリ別）— 経費タブ用（今月固定）
   const tmExpenses = expenses.filter((e) => monthOf(e.date) === tm)
@@ -785,7 +785,6 @@ export default function DashboardPage() {
                   <Row label="− 仕入れ（食材）" value={yen(pPurchase)} />
                   <Row label="− 場所代" value={yen(pFee)} />
                   {pOther > 0 && <Row label="− その他経費" value={yen(pOther)} />}
-                  {pUzura > 0 && <Row label="− 取り置き原価" value={yen(pUzura)} />}
                   {pLedgerOther > 0 && <Row label="− 経費（試作・備品など）" value={yen(pLedgerOther)} />}
                 </div>
                 <div className="flex items-center justify-between border-t border-stone-200 mt-2 pt-2">
