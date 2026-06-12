@@ -9,6 +9,7 @@ import {
   deleteRow,
   deleteRows,
   getSheetId,
+  ensureSheet,
   AuthExpiredError,
 } from '../lib/sheets'
 import { usePersistedState } from '../lib/persistState'
@@ -67,7 +68,20 @@ type Summary = {
 type SaleRec = { date: string; menu: string; qty: number; subtotal: number }
 
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`
-type DashTab = 'summary' | 'products' | 'prep'
+type DashTab = 'summary' | 'products' | 'prep' | 'expense'
+
+// 経費（イレギュラー出費）台帳
+type Expense = { idx: number; date: string; category: string; content: string; amount: number; memo: string }
+const EXPENSE_CATS = ['試作', '消耗品', '備品', '設備', 'その他'] as const
+const EXPENSE_HEADER = ['日付', 'カテゴリ', '内容', '金額', 'メモ']
+const CAT_CLS: Record<string, string> = {
+  試作: 'bg-amber-100 text-amber-800',
+  消耗品: 'bg-green-100 text-green-700',
+  備品: 'bg-stone-200 text-stone-700',
+  設備: 'bg-red-100 text-red-600',
+  その他: 'bg-stone-100 text-stone-500',
+}
+const catCls = (c: string) => CAT_CLS[c] ?? CAT_CLS['その他']
 type Period = 'all' | 'last4' | 'last8'
 const monthOf = (d: string) => d.slice(0, 7) // YYYY-MM
 const thisMonth = () => {
@@ -133,6 +147,14 @@ export default function DashboardPage() {
   const [confirmTarget, setConfirmTarget] = useState<Summary | null>(null)
   const migratedRef = useRef(false)
 
+  // 経費台帳
+  const [expenses, setExpenses] = useState<Expense[]>(
+    () => getCached<Expense[]>('dash_expenses') ?? [],
+  )
+  const [expEditId, setExpEditId] = useState<string | null>(null) // 'new' | idx文字列
+  const [expEdit, setExpEdit] = useState({ date: '', category: '試作', content: '', amount: '', memo: '' })
+  const [expConfirm, setExpConfirm] = useState<Expense | null>(null)
+
   // メニュー別（営業記録）の編集
   const [menuEditId, setMenuEditId] = useState<string | null>(null)
   const [menuEdit, setMenuEdit] = useState<{ menu: string; qty: string; price: number }[]>([])
@@ -144,6 +166,7 @@ export default function DashboardPage() {
 
   // スワイプ戻し：メニュー編集→詳細、編集→詳細、詳細→閉じる
   useRegisterBack(() => {
+    if (expEditId) { setExpEditId(null); return true }
     if (menuEditId) { setMenuEditId(null); return true }
     if (editId) { setEditId(null); return true }
     if (openId) { setOpenId(null); return true }
@@ -256,6 +279,25 @@ export default function DashboardPage() {
       setRecords(newRecords)
       setCached('dash_summaries', newSummaries)
       setCached('dash_records', newRecords)
+      // 経費台帳（シート未作成でも落ちないよう個別try/catch）
+      try {
+        const exp = await readRange(token, '経費!A2:E')
+        const newExpenses: Expense[] = exp
+          .map((r, i) => ({ r, i }))
+          .filter(({ r }) => (r[0] ?? '').trim())
+          .map(({ r, i }) => ({
+            idx: i,
+            date: (r[0] ?? '').trim(),
+            category: (r[1] ?? '').trim() || 'その他',
+            content: (r[2] ?? '').trim(),
+            amount: Number(r[3]) || 0,
+            memo: (r[4] ?? '').trim(),
+          }))
+        setExpenses(newExpenses)
+        setCached('dash_expenses', newExpenses)
+      } catch {
+        /* 経費シート未作成。空のまま（初回追加時に自動生成） */
+      }
       // 初回のみ：ローカルデータをシートへ自動移行（内部で1回ガード）
       migrateLocal(sum)
     } catch (e) {
@@ -429,6 +471,57 @@ export default function DashboardPage() {
     }
   }
 
+  // ── 経費台帳 CRUD ──
+  const startExpNew = () => {
+    setExpEditId('new')
+    setExpEdit({ date: todayStr(), category: '試作', content: '', amount: '', memo: '' })
+  }
+  const startExpEdit = (e: Expense) => {
+    setExpEditId(String(e.idx))
+    setExpEdit({
+      date: e.date, category: e.category, content: e.content,
+      amount: String(e.amount), memo: e.memo,
+    })
+  }
+  const saveExp = async (e?: Expense) => {
+    if (!token) return
+    setBusy(true)
+    setError(null)
+    try {
+      const amount = Number(expEdit.amount) || 0
+      const rowVals = [expEdit.date, expEdit.category, expEdit.content, amount, expEdit.memo]
+      if (e) {
+        const row = e.idx + 2 // A2が先頭
+        await updateValues(token, `経費!A${row}:E${row}`, [rowVals])
+      } else {
+        await ensureSheet(token, '経費', EXPENSE_HEADER)
+        await appendRows(token, '経費!A:E', [rowVals])
+      }
+      setExpEditId(null)
+      clearCache('dash_expenses')
+      await load()
+    } catch (err) {
+      handleAuthError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const removeExp = async (e: Expense) => {
+    if (!token) return
+    setBusy(true)
+    setError(null)
+    try {
+      const sheetId = await getSheetId(token, '経費')
+      await deleteRow(token, sheetId, e.idx + 1) // ヘッダー=0、A2=1
+      clearCache('dash_expenses')
+      await load()
+    } catch (err) {
+      handleAuthError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // ── 集計（今月） ──
   const tm = thisMonth()
   const tmSummaries = summaries.filter((s) => monthOf(s.date) === tm)
@@ -439,6 +532,17 @@ export default function DashboardPage() {
   const tmPeople = tmSummaries.reduce((a, s) => a + peopleOf(s), 0)
   const avgTicket = tmPeople > 0 ? tmSales / tmPeople : null
   const totalSales = summaries.reduce((a, s) => a + s.sales, 0)
+
+  // 経費（今月／累計／カテゴリ別）。今月利益から差し引く
+  const tmExpenses = expenses.filter((e) => monthOf(e.date) === tm)
+  const tmExp = tmExpenses.reduce((a, e) => a + e.amount, 0)
+  const totalExp = expenses.reduce((a, e) => a + e.amount, 0)
+  const tmExpByCat = EXPENSE_CATS.map((c) => ({
+    cat: c,
+    amount: tmExpenses.filter((e) => e.category === c).reduce((a, e) => a + e.amount, 0),
+  })).filter((x) => x.amount > 0)
+  const netProfit = tmProfit - tmExp // 今月の最終利益（営業利益 − 経費）
+  const expSorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date) || b.idx - a.idx)
 
   // 月次 原価チェック（理論 vs 実仕入れ）
   const tmActual = tmSummaries.reduce((a, s) => a + actualCostOf(s), 0)
@@ -598,17 +702,17 @@ export default function DashboardPage() {
         <>
           {/* タブバー */}
           <div className="flex border-b border-stone-200 mb-4">
-            {(['summary', 'products', 'prep'] as DashTab[]).map((t) => (
+            {(['summary', 'products', 'prep', 'expense'] as DashTab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setDashTab(t)}
-                className={`flex-1 py-2 text-sm font-semibold transition-colors ${
+                className={`flex-1 py-2 text-xs sm:text-sm font-semibold transition-colors ${
                   dashTab === t
                     ? 'border-b-2 border-amber-600 text-amber-700'
                     : 'text-stone-500'
                 }`}
               >
-                {t === 'summary' ? 'サマリー' : t === 'products' ? '商品別' : '仕込み計算'}
+                {t === 'summary' ? 'サマリー' : t === 'products' ? '商品別' : t === 'prep' ? '仕込み' : '経費'}
               </button>
             ))}
           </div>
@@ -617,7 +721,12 @@ export default function DashboardPage() {
           {/* ① 今月ヒーロー */}
           <div className="rounded-2xl border border-stone-200 bg-gradient-to-b from-stone-50 to-white p-5 mb-4">
             <p className="text-xs text-stone-500 mb-0.5">{tm.replace('-', '年')}月の利益</p>
-            <p className="text-4xl font-extrabold text-green-700 leading-tight">{yen(tmProfit)}</p>
+            <p className="text-4xl font-extrabold text-green-700 leading-tight">{yen(netProfit)}</p>
+            {tmExp > 0 && (
+              <p className="text-xs text-stone-400 mt-1">
+                営業利益 {yen(tmProfit)} − 経費 {yen(tmExp)}
+              </p>
+            )}
             <div className="grid grid-cols-3 gap-3 mt-4">
               <HeroStat label="売上" value={yen(tmSales)} />
               <HeroStat label="原価率" value={tmRate != null ? `${tmRate.toFixed(1)}%` : '—'} accent />
@@ -1116,7 +1225,108 @@ export default function DashboardPage() {
               )}
             </div>
           )}
+
+          {/* ── 経費タブ ── */}
+          {dashTab === 'expense' && (
+            <div>
+              {/* 今月／累計 */}
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div className="rounded-xl border border-stone-200 p-3">
+                  <p className="text-xs text-stone-500">今月の経費</p>
+                  <p className="text-2xl font-bold text-red-600">{yen(tmExp)}</p>
+                </div>
+                <div className="rounded-xl border border-stone-200 p-3">
+                  <p className="text-xs text-stone-500">累計</p>
+                  <p className="text-2xl font-bold text-stone-900">{yen(totalExp)}</p>
+                </div>
+              </div>
+
+              {/* カテゴリ別（今月） */}
+              {tmExpByCat.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {tmExpByCat.map((x) => (
+                    <span key={x.cat} className={`text-xs px-2.5 py-1 rounded-full font-semibold ${catCls(x.cat)}`}>
+                      {x.cat} {yen(x.amount)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* 追加ボタン／フォーム */}
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm font-bold text-stone-700">明細</h2>
+                {expEditId !== 'new' && (
+                  <button
+                    onClick={startExpNew}
+                    className="text-xs bg-amber-700 text-[#faf9f5] px-2.5 py-1 rounded-lg font-semibold active:opacity-80"
+                  >
+                    ＋ 経費を追加
+                  </button>
+                )}
+              </div>
+
+              {expEditId === 'new' && (
+                <ExpenseForm
+                  edit={expEdit} setEdit={setExpEdit} busy={busy}
+                  onCancel={() => setExpEditId(null)} onSave={() => saveExp()} isNew
+                />
+              )}
+
+              <div className="space-y-2 mt-2">
+                {expSorted.length === 0 && expEditId !== 'new' && (
+                  <p className="text-center text-stone-400 text-sm py-8">
+                    まだ経費がありません。試作・容器・備品などの出費をここに記録します。
+                  </p>
+                )}
+                {expSorted.map((e) => {
+                  const eid = String(e.idx)
+                  const editing = expEditId === eid
+                  if (editing) {
+                    return (
+                      <ExpenseForm
+                        key={eid} edit={expEdit} setEdit={setExpEdit} busy={busy}
+                        onCancel={() => setExpEditId(null)} onSave={() => saveExp(e)}
+                        onDelete={() => setExpConfirm(e)}
+                      />
+                    )
+                  }
+                  return (
+                    <div key={eid} className="border border-stone-200 rounded-xl px-3.5 py-3 bg-white">
+                      <button onClick={() => startExpEdit(e)} className="w-full text-left">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${catCls(e.category)}`}>
+                            {e.category}
+                          </span>
+                          <span className="flex-1 truncate font-medium text-stone-800">
+                            {e.content || '（内容なし）'}
+                          </span>
+                          <span className="font-bold text-stone-900 shrink-0">−{yen(e.amount)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-stone-400 mt-1">
+                          <span>{e.date}</span>
+                          {e.memo && <span className="truncate ml-2">{e.memo}</span>}
+                        </div>
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </>
+      )}
+
+      {expConfirm && (
+        <ConfirmModal
+          message={`${expConfirm.date} の経費「${expConfirm.content || expConfirm.category}」を削除しますか？\n（元に戻せません）`}
+          onConfirm={() => {
+            const e = expConfirm
+            setExpConfirm(null)
+            setExpEditId(null)
+            removeExp(e)
+          }}
+          onCancel={() => setExpConfirm(null)}
+        />
       )}
 
       {confirmTarget && (
@@ -1130,6 +1340,97 @@ export default function DashboardPage() {
           onCancel={() => setConfirmTarget(null)}
         />
       )}
+    </div>
+  )
+}
+
+function ExpenseForm({
+  edit,
+  setEdit,
+  busy,
+  onCancel,
+  onSave,
+  onDelete,
+  isNew,
+}: {
+  edit: { date: string; category: string; content: string; amount: string; memo: string }
+  setEdit: React.Dispatch<React.SetStateAction<{ date: string; category: string; content: string; amount: string; memo: string }>>
+  busy: boolean
+  onCancel: () => void
+  onSave: () => void
+  onDelete?: () => void
+  isNew?: boolean
+}) {
+  return (
+    <div className="border border-amber-300 rounded-xl px-3 pb-3 pt-2 text-sm space-y-2 bg-amber-50/40">
+      <p className="font-semibold text-amber-800 text-xs">{isNew ? '経費を追加' : '経費を編集'}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs text-stone-500 mb-1">日付</label>
+          <input
+            type="date"
+            value={edit.date}
+            onChange={(e) => setEdit((p) => ({ ...p, date: e.target.value }))}
+            className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-stone-500 mb-1">カテゴリ</label>
+          <select
+            value={edit.category}
+            onChange={(e) => setEdit((p) => ({ ...p, category: e.target.value }))}
+            className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+          >
+            {EXPENSE_CATS.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs text-stone-500 mb-1">内容</label>
+        <input
+          type="text"
+          value={edit.content}
+          onChange={(e) => setEdit((p) => ({ ...p, content: e.target.value }))}
+          placeholder="例：ビリヤニ試作 / テイクアウト容器100個"
+          className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs text-stone-500 mb-1">金額（円）</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={edit.amount}
+            onChange={(e) => setEdit((p) => ({ ...p, amount: e.target.value }))}
+            className="w-full border border-stone-300 rounded-lg px-3 py-2 text-right bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-stone-500 mb-1">メモ（任意）</label>
+          <input
+            type="text"
+            value={edit.memo}
+            onChange={(e) => setEdit((p) => ({ ...p, memo: e.target.value }))}
+            className="w-full border border-stone-300 rounded-lg px-3 py-2 bg-white"
+          />
+        </div>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button onClick={onCancel} disabled={busy} className="flex-1 py-2 rounded-lg border border-stone-300 text-stone-600 font-semibold">
+          キャンセル
+        </button>
+        {onDelete && (
+          <button onClick={onDelete} disabled={busy} className="px-4 py-2 rounded-lg border border-red-200 text-red-600 font-semibold active:bg-red-50">
+            🗑️
+          </button>
+        )}
+        <button onClick={onSave} disabled={busy || !edit.date} className="flex-1 py-2 rounded-lg bg-amber-700 text-[#faf9f5] font-bold disabled:opacity-50">
+          {busy ? '保存中...' : isNew ? '追加' : '保存'}
+        </button>
+      </div>
     </div>
   )
 }

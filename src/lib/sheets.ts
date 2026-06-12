@@ -65,6 +65,36 @@ export async function getSheetId(token: string, title: string): Promise<number> 
   return sheet.properties.sheetId as number
 }
 
+/** シートが無ければ作成し、ヘッダー行を書き込む。存在すれば何もしない。
+ *  作成・既存いずれの場合も sheetId を返す。 */
+export async function ensureSheet(
+  token: string,
+  title: string,
+  header?: string[],
+): Promise<number> {
+  try {
+    return await getSheetId(token, title)
+  } catch {
+    // 見つからない → 新規作成
+    const res = await fetch(`${BASE}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        requests: [{ addSheet: { properties: { title } } }],
+      }),
+    })
+    const data = await handle(res)
+    const sheetId = data.replies?.[0]?.addSheet?.properties?.sheetId as number
+    if (header && header.length) {
+      await updateValues(token, `${title}!A1`, [header])
+    }
+    return sheetId
+  }
+}
+
 /** 指定シートの行を物理削除する。rowIndex は0始まり（ヘッダー行=0）。 */
 export async function deleteRow(token: string, sheetId: number, rowIndex: number) {
   const res = await fetch(`${BASE}:batchUpdate`, {
