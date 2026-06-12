@@ -112,8 +112,6 @@ const todayStr = () => {
 }
 
 // 旧データ（localStorage）をフォールバック参照
-const actualCostOf = (s: Summary) =>
-  s.actualCost > 0 ? s.actualCost : getEventData(s.date).cost ?? 0
 const groupsOf = (s: Summary) =>
   s.groups > 0 ? s.groups : getEventData(s.date).groups ?? 0
 const peopleOf = (s: Summary) => {
@@ -208,26 +206,23 @@ export default function DashboardPage() {
   const migrateLocal = useCallback(
     async (rawRows: string[][]) => {
       if (!token || migratedRef.current) return
+      // 旧localStorageの組数(J)・客数(K)のみ移行。実仕入れ(L)は廃止のため移行しない
       const writes: { row: number; vals: (number | string)[] }[] = []
       rawRows.forEach((r, i) => {
         const date = (r[0] ?? '').trim()
         if (!date) return
         const gBlank = (r[9] ?? '').trim() === ''
         const pBlank = (r[10] ?? '').trim() === ''
-        const cBlank = (r[11] ?? '').trim() === ''
-        if (!gBlank && !pBlank && !cBlank) return
+        if (!gBlank && !pBlank) return
         const ev = getEventData(date)
         const fills =
-          (gBlank && ev.groups != null) ||
-          (pBlank && ev.people != null) ||
-          (cBlank && ev.cost != null)
+          (gBlank && ev.groups != null) || (pBlank && ev.people != null)
         if (!fills) return
         writes.push({
           row: i + 2,
           vals: [
             gBlank ? ev.groups ?? '' : Number(r[9]) || 0,
             pBlank ? ev.people ?? '' : Number(r[10]) || 0,
-            cBlank ? ev.cost ?? '' : Number(r[11]) || 0,
           ],
         })
       })
@@ -235,7 +230,7 @@ export default function DashboardPage() {
       migratedRef.current = true
       try {
         for (const w of writes) {
-          await updateValues(token, `営業サマリー!J${w.row}:L${w.row}`, [w.vals])
+          await updateValues(token, `営業サマリー!J${w.row}:K${w.row}`, [w.vals])
         }
         clearCache('dash_summaries')
         await load(true)
@@ -364,7 +359,7 @@ export default function DashboardPage() {
       toriokiRecipe: s.uzuraCost > 0 ? savedRecipe : '',
       groups: groupsOf(s) > 0 ? String(groupsOf(s)) : '',
       people: peopleOf(s) > 0 ? String(peopleOf(s)) : '',
-      actualCost: actualCostOf(s) > 0 ? String(actualCostOf(s)) : '',
+      actualCost: '',
     })
   }
 
@@ -566,9 +561,8 @@ export default function DashboardPage() {
   const pLedgerOther = pExpenses
     .filter((e) => e.category !== PURCHASE_CAT)
     .reduce((a, e) => a + e.amount, 0)
-  // 旧データ：締めで入力した実仕入れ(L列)も食材費として扱う（後方互換）
-  const pLegacyPurchase = pSummaries.reduce((a, s) => a + actualCostOf(s), 0)
-  const pPurchase = pLedgerPurchaseNew + pLegacyPurchase // 期間の食材仕入れ合計（実費）
+  // 食材仕入れ＝経費タブの「仕入れ」のみ（旧L列の実仕入れは廃止につき集計しない）
+  const pPurchase = pLedgerPurchaseNew
   const noPurchase = pPurchase <= 0 && pSales > 0 // 仕入れ未記録
   // 実際の利益（実費ベース）＝売上 −（仕入れ＋場所代＋その他＋取り置き＋経費その他）
   const pActual = pSales - pPurchase - pFee - pOther - pUzura - pLedgerOther
@@ -1002,7 +996,6 @@ export default function DashboardPage() {
                           <Row label="原価率" value={rate != null ? `${rate.toFixed(1)}%` : '—'} />
                           {groupsOf(s) > 0 && <Row label="組数 / 客数" value={`${groupsOf(s)}組 / ${ppl}人`} />}
                           {ppl > 0 && <Row label="客単価" value={yen(s.sales / ppl)} />}
-                          {actualCostOf(s) > 0 && <Row label="実仕入れ" value={yen(actualCostOf(s))} />}
                         </div>
                         {s.memo && <p className="text-stone-500 mb-2">メモ: {s.memo}</p>}
                         {menuEditId === sid ? (
