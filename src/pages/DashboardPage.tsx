@@ -550,8 +550,7 @@ export default function DashboardPage() {
   const pFee = pSummaries.reduce((a, s) => a + s.locationFee, 0)
   const pOther = pSummaries.reduce((a, s) => a + s.otherCost, 0)
   const pUzura = pSummaries.reduce((a, s) => a + s.uzuraCost, 0)
-  const pFoodCost = pSummaries.reduce((a, s) => a + s.foodCost, 0) // 理論
-  const pProfitEst = pSummaries.reduce((a, s) => a + s.profit, 0) // 推定（営業）利益
+  const pFoodCost = pSummaries.reduce((a, s) => a + s.foodCost, 0) // 理論（原価率の分析用）
   const pPeople = pSummaries.reduce((a, s) => a + peopleOf(s), 0)
   // 期間内の経費台帳。仕入れ（食材費）とそれ以外に分ける
   const pExpenses = expenses.filter((e) => inPeriod(e.date))
@@ -566,8 +565,6 @@ export default function DashboardPage() {
   const noPurchase = pPurchase <= 0 && pSales > 0 // 仕入れ未記録
   // 実際の利益（実費ベース）＝売上 −（仕入れ＋場所代＋その他＋取り置き＋経費その他）
   const pActual = pSales - pPurchase - pFee - pOther - pUzura - pLedgerOther
-  // 推定利益（原価計算ベース）：営業利益(理論)から経費その他のみ控除（仕入れは理論原価で計上済み）
-  const pEst = pProfitEst - pLedgerOther
   const pRate = pSales > 0 ? (pFoodCost / pSales) * 100 : null
   const avgTicket = pPeople > 0 ? pSales / pPeople : null
   const pCostTotal = pPurchase + pFee + pOther + pUzura + pLedgerOther
@@ -771,7 +768,6 @@ export default function DashboardPage() {
             <p className={`text-4xl font-extrabold leading-tight ${pActual >= 0 ? 'text-green-700' : 'text-red-600'}`}>
               {yen(pActual)}
             </p>
-            <p className="text-xs text-stone-400 mt-1">推定利益（原価計算）{yen(pEst)}</p>
             <div className="grid grid-cols-3 gap-3 mt-4">
               <HeroStat label="売上" value={yen(pSales)} />
               <HeroStat label="原価率" value={pRate != null ? `${pRate.toFixed(1)}%` : '—'} accent />
@@ -813,7 +809,7 @@ export default function DashboardPage() {
 
           {/* ③ 売上・利益の推移（折れ線1枚） */}
           {last8.length > 0 && (
-            <Section title="売上・利益の推移（直近8回）">
+            <Section title="売上・推定利益の推移（直近8回）">
               <LineChart
                 data={last8.map((s) => ({
                   label: s.date.slice(5).replace('-', '/'),
@@ -826,7 +822,7 @@ export default function DashboardPage() {
                   <span style={{ color: '#d9824f' }}>●</span> 売上
                 </span>
                 <span className="text-stone-500">
-                  <span style={{ color: '#6bcf8c' }}>●</span> 利益
+                  <span style={{ color: '#6bcf8c' }}>●</span> 推定利益
                 </span>
               </div>
             </Section>
@@ -917,7 +913,7 @@ export default function DashboardPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between text-xs text-stone-500 mb-1">
                             <span>売上 <b className="text-stone-900">{yen(s.sales)}</b></span>
-                            <span>利益 <b className="text-green-700">{yen(s.profit)}</b></span>
+                            <span>推定利益 <b className="text-green-700">{yen(s.profit)}</b></span>
                           </div>
                           <div className="h-1.5 bg-stone-100 rounded overflow-hidden">
                             <div
@@ -988,12 +984,12 @@ export default function DashboardPage() {
                       <div className="px-3 pb-3 pt-1 border-t border-stone-100 text-sm">
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 my-2">
                           <Row label="売上" value={yen(s.sales)} />
-                          <Row label="食材原価" value={yen(s.foodCost)} />
+                          <Row label="食材原価（理論）" value={yen(s.foodCost)} />
                           <Row label="場所代" value={yen(s.locationFee)} />
                           {s.otherCost > 0 && <Row label="その他経費" value={yen(s.otherCost)} />}
                           {s.uzuraCost > 0 && <Row label="取り置き原価" value={yen(s.uzuraCost)} />}
-                          <Row label="利益" value={yen(s.profit)} accent />
-                          <Row label="原価率" value={rate != null ? `${rate.toFixed(1)}%` : '—'} />
+                          <Row label="推定利益" value={yen(s.profit)} accent />
+                          <Row label="原価率（理論）" value={rate != null ? `${rate.toFixed(1)}%` : '—'} />
                           {groupsOf(s) > 0 && <Row label="組数 / 客数" value={`${groupsOf(s)}組 / ${ppl}人`} />}
                           {ppl > 0 && <Row label="客単価" value={yen(s.sales / ppl)} />}
                         </div>
