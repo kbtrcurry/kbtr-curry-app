@@ -722,7 +722,7 @@ export default function PosPage() {
 
       {/* 合計バー */}
       {menus.length > 0 && (
-        <div className="fixed bottom-16 left-0 right-0 md:bottom-0 md:left-52 lg:left-60 bg-white border-t border-stone-200 z-30">
+        <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-0 right-0 md:bottom-0 md:left-52 lg:left-60 bg-white border-t border-stone-200 z-30">
           <div className="mx-auto w-full max-w-screen-sm lg:max-w-3xl px-4 py-3">
             <div className="flex items-center justify-between mb-2">
               <span className="text-stone-500">合計（{cartCount}点）</span>

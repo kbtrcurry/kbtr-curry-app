@@ -107,10 +107,13 @@ function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* メイン */}
-      <main className="flex-1 min-w-0 pb-24 md:pb-10">{children}</main>
+      <main className="flex-1 min-w-0 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] md:pb-10">{children}</main>
 
-      {/* ボトムナビ（モバイル） */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex z-40">
+      {/* ボトムナビ（モバイル）。ホームバー（セーフエリア）分だけアイコンを上げる（X/Instagram風） */}
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex z-40"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         {BOTTOM_NAV.map((item) => (
           <NavLink
             key={item.to}
