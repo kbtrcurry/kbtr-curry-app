@@ -46,6 +46,7 @@ const DISABLED_FLAGS = ['off', 'false', '無効', 'no', '0']
 const QUICK_AMOUNTS = [1000, 5000, 10000]
 const MANUAL_LABEL = '金額入力'
 const TORIOKI_RECIPE_KEY = 'kbtr_torioki_recipe'
+const MENU_ORDER_KEY = 'kbtr_menu_order'
 
 function todayStr(): string {
   const d = new Date()
@@ -64,13 +65,13 @@ const salesKey = (date: string) => `kbtr_sales_${date}`
 function Numpad({ onKey, fill = false }: { onKey: (k: string) => void; fill?: boolean }) {
   const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '00', '0', '⌫']
   return (
-    <div className={`grid grid-cols-3 gap-px bg-stone-200 rounded-2xl overflow-hidden ${fill ? 'flex-1 min-h-0' : ''}`}>
+    <div className={`grid grid-cols-3 gap-px bg-stone-200 rounded-2xl overflow-hidden ${fill ? 'flex-1 min-h-0 grid-rows-4' : ''}`}>
       {keys.map((k) => (
         <button
           key={k}
           onClick={() => onKey(k)}
           className={`bg-white text-stone-900 text-3xl md:text-4xl font-medium tracking-tight flex items-center justify-center active:bg-stone-100 transition-colors ${
-            fill ? 'min-h-[3.25rem]' : 'py-5'
+            fill ? 'min-h-0' : 'py-5'
           }`}
         >
           {k === '⌫' ? <span className="text-2xl md:text-3xl text-stone-500">⌫</span> : k}
@@ -83,6 +84,15 @@ function Numpad({ onKey, fill = false }: { onKey: (k: string) => void; fill?: bo
 export default function PosPage() {
   const { token, login, logout } = useAuth()
   const [menus, setMenus] = useState<Menu[]>(() => getCached<Menu[]>('pos_menus') ?? [])
+  // メニューボタンの並び順（localStorage・名前の配列）と並び替えモード
+  const [menuOrder, setMenuOrder] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(MENU_ORDER_KEY) ?? '[]')
+    } catch {
+      return []
+    }
+  })
+  const [reordering, setReordering] = useState(false)
   const [qty, setQty] = usePersistedState<Record<string, number>>('kbtr_view_pos_qty', {})
   const [manualItems, setManualItems] = usePersistedState<ManualItem[]>(
     'kbtr_view_pos_manual',
@@ -204,6 +214,25 @@ export default function PosPage() {
   const receivedNum = Number(received) || 0
   const change = receivedNum - cartTotal
   const dayTotal = sales.reduce((s, r) => s + r.total, 0)
+
+  // 保存した並び順でメニューを並べる（未登録の名前は後ろ＝元の順）
+  const orderedMenus = [...menus].sort((a, b) => {
+    const ia = menuOrder.indexOf(a.name)
+    const ib = menuOrder.indexOf(b.name)
+    if (ia === -1 && ib === -1) return 0
+    if (ia === -1) return 1
+    if (ib === -1) return -1
+    return ia - ib
+  })
+  const moveMenu = (name: string, dir: -1 | 1) => {
+    const names = orderedMenus.map((m) => m.name)
+    const i = names.indexOf(name)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= names.length) return
+    ;[names[i], names[j]] = [names[j], names[i]]
+    setMenuOrder(names)
+    localStorage.setItem(MENU_ORDER_KEY, JSON.stringify(names))
+  }
 
   const pressReceived = (k: string) =>
     setReceived((v) => (k === '⌫' ? v.slice(0, -1) : v + (k === '00' ? '00' : k)))
@@ -424,11 +453,11 @@ export default function PosPage() {
   if (step === 'pay') {
     return (
       <div
-        className="flex flex-col mx-auto px-4 pt-2 max-w-md md:max-w-3xl lg:max-w-5xl"
+        className="flex flex-col mx-auto px-4 pt-2 max-w-md md:max-w-3xl lg:max-w-5xl overflow-hidden"
         style={{
-          // モバイル下部ナビ(64px)＋セーフエリアを避ける。固定配置は使わない
-          minHeight: '100svh',
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 5rem)',
+          // 画面内に必ず収める（スクロール不要）。下部ナビ＋セーフエリアぶんを確保
+          height: '100svh',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 4.5rem)',
         }}
       >
         <div className="flex items-center mb-2 shrink-0">
@@ -566,9 +595,23 @@ export default function PosPage() {
     <div className="p-4 pb-40">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold text-amber-800">🛒 レジ</h1>
-        <button onClick={() => loadMenus()} className="text-sm text-stone-500 border border-stone-200 rounded-lg px-2 py-1 active:bg-stone-50">
-          ↻ 更新
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setReordering((v) => !v)}
+            className={`text-sm border rounded-lg px-2 py-1 active:opacity-80 ${
+              reordering
+                ? 'bg-amber-700 text-[#faf9f5] border-amber-700 font-semibold'
+                : 'text-stone-500 border-stone-200'
+            }`}
+          >
+            {reordering ? '完了' : '↕ 並び替え'}
+          </button>
+          {!reordering && (
+            <button onClick={() => loadMenus()} className="text-sm text-stone-500 border border-stone-200 rounded-lg px-2 py-1 active:bg-stone-50">
+              ↻ 更新
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-stone-50 rounded-lg px-3 py-2 mb-4 space-y-2">
@@ -643,12 +686,43 @@ export default function PosPage() {
         </p>
       )}
 
+      {reordering && (
+        <p className="text-xs text-stone-500 mb-2">◀ ▶ でボタンの並び順を入れ替えできます。終わったら「完了」。</p>
+      )}
+
       {/* メニューカード（横3〜4） */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {menus.map((m) => {
+        {orderedMenus.map((m, i) => {
           const count = qty[m.name] ?? 0
+          if (reordering) {
+            return (
+              <div key={m.name} className="rounded-2xl border-2 border-amber-300 bg-amber-50/40 flex flex-col overflow-hidden">
+                <div className="p-3 flex-1">
+                  <p className="font-bold text-stone-900 leading-snug">{m.name}</p>
+                  <p className="text-amber-800 font-bold mt-1">¥{m.price.toLocaleString()}</p>
+                </div>
+                <div className="flex border-t-2 border-amber-200">
+                  <button
+                    onClick={() => moveMenu(m.name, -1)}
+                    disabled={i === 0}
+                    className="flex-1 py-3 text-xl font-bold text-stone-600 active:bg-stone-100 disabled:opacity-20"
+                  >
+                    ◀
+                  </button>
+                  <button
+                    onClick={() => moveMenu(m.name, 1)}
+                    disabled={i === orderedMenus.length - 1}
+                    className="flex-1 py-3 text-xl font-bold text-stone-600 active:bg-stone-100 border-l border-amber-200 disabled:opacity-20"
+                  >
+                    ▶
+                  </button>
+                </div>
+              </div>
+            )
+          }
           return (
             <div
+              key={m.name}
               className={`rounded-2xl border-2 flex flex-col ${
                 count > 0 ? 'border-amber-500 bg-amber-50' : 'border-stone-300 bg-white'
               }`}
@@ -685,17 +759,19 @@ export default function PosPage() {
           )
         })}
 
-        {/* 手動金額 */}
-        <button
-          onClick={() => {
-            setManualOpen(true)
-            setManualVal('')
-          }}
-          className="rounded-2xl p-4 min-h-28 flex flex-col items-center justify-center border-2 border-dashed border-amber-400 text-amber-700 font-bold active:scale-95 transition-transform"
-        >
-          <span className="text-3xl">＋</span>
-          金額入力
-        </button>
+        {/* 手動金額（並び替え中は非表示） */}
+        {!reordering && (
+          <button
+            onClick={() => {
+              setManualOpen(true)
+              setManualVal('')
+            }}
+            className="rounded-2xl p-4 min-h-28 flex flex-col items-center justify-center border-2 border-dashed border-amber-400 text-amber-700 font-bold active:scale-95 transition-transform"
+          >
+            <span className="text-3xl">＋</span>
+            金額入力
+          </button>
+        )}
       </div>
 
       {/* 手動金額のチップ */}
