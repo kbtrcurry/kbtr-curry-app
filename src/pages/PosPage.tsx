@@ -453,13 +453,14 @@ export default function PosPage() {
   if (step === 'pay') {
     return (
       <div
-        className="flex flex-col mx-auto px-4 pt-2 max-w-md md:max-w-3xl lg:max-w-5xl overflow-hidden"
+        className="fixed inset-0 z-50 bg-[#191817] flex justify-center overflow-hidden"
         style={{
-          // 画面内に必ず収める（スクロール不要）。下部ナビ＋セーフエリアぶんを確保
-          height: '100svh',
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 4.5rem)',
+          // ヘッダー/ボトムナビの上に重ねて全画面表示（はみ出し・被りを防ぐ）
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
         }}
       >
+        <div className="flex flex-col w-full min-h-0 px-4 max-w-md md:max-w-3xl lg:max-w-5xl">
         <div className="flex items-center mb-2 shrink-0">
           <button onClick={() => setStep('select')} className="text-stone-500 py-1 md:text-lg">
             ← 戻る
@@ -561,6 +562,7 @@ export default function PosPage() {
               </button>
             </div>
           </div>
+        </div>
         </div>
       </div>
     )
